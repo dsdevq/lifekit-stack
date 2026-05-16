@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -32,24 +33,42 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  ansible-lint:
-    name: Ansible lint
+  deploy:
+    name: Deploy to VPS
+    needs: [lint, gitleaks-full]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    if: false  # enable once ansible/playbook.yml exists
+    concurrency:
+      group: deploy-vps
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-      - uses: ansible/ansible-lint@main
-        with:
-          working_directory: ansible
 
-  templates-render:
-    name: Jinja2 template render check
-    runs-on: ubuntu-latest
-    if: false  # enable once templates and a test harness exist
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Join tailnet (ephemeral)
+        uses: tailscale/github-action@v3
         with:
-          python-version: "3.12"
-      - run: pip install jinja2-cli pyyaml
-      - run: python scripts/test-render-all.py
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          hostname: gh-runner-${{ github.run_id }}
+          version: latest
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ vars.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              -o StrictHostKeyChecking=accept-new \
+              -o ServerAliveInterval=15 \
+              lifekit@${{ vars.VPS_HOST }} \
+              'cd /srv/lifekit-stack && git fetch origin main && git reset --hard origin/main && bash scripts/deploy.sh'
+
+      - name: Smoke check (gateway health)
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              lifekit@${{ vars.VPS_HOST }} \
+              'cd /srv/lifekit-stack/compose && docker compose ps --format "{{.Service}}\t{{.State}}\t{{.Status}}"'
