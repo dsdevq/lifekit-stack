@@ -52,10 +52,13 @@ services:
       - /bin/sh
       - -c
       - |
+        export NPM_CONFIG_PREFIX=/home/node/.npm-global
+        export PATH="/home/node/.npm-global/bin:$$PATH"
         if ! command -v claude >/dev/null 2>&1; then
-          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || true
+          mkdir -p /home/node/.npm-global
+          npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
         fi
-        exec "$@"
+        exec "$$@"
       - --
     command:
       - node
