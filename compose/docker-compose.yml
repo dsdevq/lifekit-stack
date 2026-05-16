@@ -37,6 +37,8 @@ services:
       # ~/.life/ is bind-mounted in so OpenClaw skills can read/write it.
       # The container-side path matches what skills expect.
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      # Claude CLI session creds so the agent harness can authenticate to Anthropic.
+      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -46,6 +48,15 @@ services:
     # Admin access goes through Tailscale + SSH tunnel.
     ports:
       - "127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if ! command -v claude >/dev/null 2>&1; then
+          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || true
+        fi
+        exec "$@"
+      - --
     command:
       - node
       - dist/index.js
