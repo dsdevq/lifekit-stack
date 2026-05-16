@@ -6,9 +6,12 @@
 
 - **[OpenClaw](https://openclaw.ai/)** — the runtime gateway. Telegram bot, voice, scheduled briefs, conversational agent, workspace skills.
 - **[lifekit](https://github.com/dsdevq/lifekit)** — the Python framework that owns your `~/.life/` knowledge layer, the wizard, and the curator that maintains your domain files.
+- **`lifekit-curator`** — sibling container drains `queue.jsonl` and updates your domain files in the background.
 - **Workspace skills** — opt-in skills bundled with this template (morning brief, learning coach, brainstorm, calendar/gmail integration, and more — see [`skills/`](./skills/)).
 - **Docker Compose + Ansible** — infrastructure-as-code. Reproducible from `git clone`.
 - **Tailscale + loopback-only** — no public ingress, no domain, no TLS to manage. Telegram long-polling outbound only.
+
+Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibling containers here — when they land in a future release, they run *inside* a NemoClaw sandbox spawned per invocation by OpenClaw. See [`docs/architecture.md`](./docs/architecture.md) for the boundary.
 
 ## Status
 
