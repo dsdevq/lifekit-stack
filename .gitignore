@@ -1,0 +1,63 @@
+# Wizard output — generated locally, never committed
+wizard.yaml
+*.env
+.env*
+!.env.example
+
+# Rendered templates (output of jinja2 render — local artefact)
+*.rendered
+/_render/
+
+# Secrets
+*.pem
+*.key
+*-token
+*.tskey
+auth-profiles.json
+secrets/
+
+# OpenClaw runtime state (if someone runs the stack locally inside the repo)
+.openclaw/
+openclaw.json
+config/
+workspace/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Ansible
+*.retry
+.ansible/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Editors
+.idea/
+.vscode/
+*.iml
+
+# Logs
+*.log
+logs/
+
+# Local-only personal data (defensive — should never get this far)
+.life/
+life-data/
+my-context.yaml
+my-context.yml
