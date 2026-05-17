@@ -25,4 +25,10 @@ RUN mkdir -p /home/node/.cache \
     && XDG_CACHE_HOME=/home/node/.cache /opt/whisper/bin/python -c "import whisper; whisper.load_model('base')" \
     && chown -R node:node /home/node/.cache
 
+# Video transcription wrapper: ffmpeg strips audio → whisper transcribes.
+# Used by tools.media.video CLI fallback since Claude Pro doesn't cover
+# video understanding (matrix is Google/Qwen/Moonshot only).
+COPY video-transcribe /usr/local/bin/video-transcribe
+RUN chmod 0755 /usr/local/bin/video-transcribe
+
 USER node
