@@ -78,7 +78,6 @@ Full walkthrough: [`docs/quickstart.md`](./docs/quickstart.md).
 
 ```
 lifekit-stack/
-├── ansible/              # host bootstrap (docker + tailscale + ufw + dirs)
 ├── compose/              # docker-compose.extra.yml, Dockerfiles, OpenClaw config template
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
 ├── scripts/              # bootstrap.sh, deploy.sh
