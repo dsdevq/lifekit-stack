@@ -130,3 +130,5 @@ Non-Hetzner / non-Telegram setups are not officially supported in v0.x — pull 
 - [dsdevq/lifekit](https://github.com/dsdevq/lifekit) — the Python framework + wizard CLI this template uses.
 - [OpenClaw](https://openclaw.ai/) — the runtime gateway.
 - [The story behind it](#) — _coming soon: blog post on building a file-based framework for personal AI memory._
+
+> Phase 5.5 code-task autonomous runner online (2026-05-17).
