@@ -7,10 +7,10 @@ Thanks for thinking about contributing. This project is small, opinionated, and 
 `lifekit-stack` is a deployment template for a personal-AI stack consisting of [OpenClaw](https://openclaw.ai/) + [lifekit](https://github.com/dsdevq/lifekit) + workspace skills, deployable to a Hetzner-style VPS via Docker Compose. That's it.
 
 **In scope:**
-- Bug fixes in the Ansible playbook, compose extras, deploy scripts, wizard integration.
+- Bug fixes in the bootstrap script, compose extras, deploy scripts, wizard integration.
 - New parameterized workspace skills under `skills/`, provided they follow the templating discipline (see below) and pass the `PRIVATE.md` audit.
 - Documentation improvements.
-- Support for additional VPS providers (DigitalOcean, Vultr, etc.) — preferably as additional Ansible roles, not by rewriting the existing one.
+- Support for additional VPS providers (DigitalOcean, Vultr, etc.) — preferably as additional bash bootstrap variants, not by rewriting the existing one.
 
 **Out of scope for v0.x:**
 - Non-Telegram chat channels (Discord, Slack, etc. — OpenClaw supports them, but the template's wizard only validates Telegram for v0.x).
@@ -24,9 +24,9 @@ If you want to extend scope, open an issue first to discuss.
 
 1. **No private data, ever.** Read [`PRIVATE.md`](./PRIVATE.md) before committing anything. The `gitleaks` hook catches secrets; you catch personal context.
 2. **Every skill is templated.** No personal data baked into a `SKILL.md`. If you can't templateize a skill cleanly, it doesn't go in `skills/`.
-3. **Idempotency.** Ansible roles, deploy scripts, and the wizard's `init-stack` all must be safely re-runnable. State changes only when needed.
+3. **Idempotency.** The bootstrap script, deploy scripts, and the wizard's `init-stack` all must be safely re-runnable. State changes only when needed.
 4. **Conventional Commits.** All commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`). The `release-please` workflow uses these to derive the changelog.
-5. **All PRs must pass CI.** Pre-commit, template-render tests, Ansible lint, hadolint. No exceptions.
+5. **All PRs must pass CI.** Pre-commit, template-render tests, shellcheck, hadolint. No exceptions.
 
 ## Local development setup
 
@@ -57,7 +57,7 @@ To test a wizard change end-to-end, you'll need a sacrificial VPS or a local VM.
 
 ## How to add a VPS-provider adapter
 
-1. New Ansible role under `ansible/roles/<provider>/` with the same surface as `ansible/roles/hetzner/` (idempotent host bootstrap, docker install, Tailscale, UFW, dirs).
+1. New bash bootstrap variant under `scripts/` (e.g. `bootstrap-vps-<provider>.sh`) with the same surface as `scripts/bootstrap-vps.sh` (idempotent host bootstrap, docker install, Tailscale, UFW, dirs).
 2. Document the provider's prerequisites in `docs/providers/<provider>.md`.
 3. Wire it into the wizard so `lifekit init-stack` can prompt for provider choice.
 
