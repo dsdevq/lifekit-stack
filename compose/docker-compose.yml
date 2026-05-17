@@ -107,6 +107,15 @@ services:
       OPENCLAW_STATE_DIR: /home/node/.openclaw
       OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
       OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      # Must mirror the gateway's env for the CLI to talk to the gateway on
+      # privileged surfaces like `cron list`/`cron add`. Without
+      # OPENCLAW_ALLOW_INSECURE_PRIVATE_WS the cli refuses plaintext WS for
+      # those routes and the connection drops with a 1006 abnormal close
+      # (observed on OpenClaw 2026.5.7 — non-cron commands like `sessions`
+      # weren't affected, which is what made the bug confusing). Both env
+      # vars need to match the gateway's settings.
+      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
+      OPENCLAW_DISABLE_BONJOUR: "1"
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       BROWSER: echo
