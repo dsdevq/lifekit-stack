@@ -48,6 +48,11 @@ services:
       # against API credits.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # gh CLI auth for the Phase 5.5 code-task skill — set up once on the
+      # host via `gh auth login` as lifekit user; container inherits the creds.
+      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
+      # Host gitconfig (user.name/email) so commits land with the right author.
+      - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
     cap_drop:
       - NET_RAW
       - NET_ADMIN
