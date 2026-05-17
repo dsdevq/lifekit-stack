@@ -1,14 +1,19 @@
 #!/bin/bash
-# Extracts the audio track from a video with ffmpeg and transcribes it with
-# whisper. Emits the transcript on stdout, in the shape OpenClaw's
-# tools.media.video CLI-entry contract expects.
+# Summarizes an inbound video for OpenClaw's tools.media.video CLI fallback.
 #
-# Video understanding via Claude Pro isn't supported (the matrix is
-# Google/Qwen/Moonshot only), and Denys's actual Telegram video usage is
-# talking-on-camera while doing things — so audio-only transcription
-# recovers ~all of the signal without paid APIs.
+# Two channels:
+#   1. Audio   — ffmpeg strips the audio track → whisper transcribes
+#   2. Visual  — ffmpeg extracts 3 evenly-spaced keyframes →
+#                claude --print describes them in one call
+#
+# Both are best-effort; either side may produce an empty section without
+# failing the run. Output goes to stdout in the shape OpenClaw expects.
+#
+# Why this exists: Claude (Anthropic) isn't in OpenClaw's video provider
+# matrix (Google/Qwen/Moonshot only), and Denys is on Claude Pro — so we
+# decompose video into the two capabilities we *can* hit cheaply.
 
-set -euo pipefail
+set -uo pipefail
 
 if [[ $# -lt 1 ]]; then
   echo "usage: video-transcribe <media-path>" >&2
@@ -16,17 +21,49 @@ if [[ $# -lt 1 ]]; then
 fi
 
 INPUT="$1"
-WAV="$(mktemp --suffix=.wav)"
-WHISPER_OUT_DIR="$(mktemp -d)"
-trap 'rm -rf "$WAV" "$WHISPER_OUT_DIR"' EXIT
+SCRATCH=$(mktemp -d)
+trap 'rm -rf "$SCRATCH"' EXIT
 
-ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -vn -ar 16000 -ac 1 -f wav "$WAV"
+# ── audio ────────────────────────────────────────────────────────────────
+WAV="$SCRATCH/audio.wav"
+TRANSCRIPT=""
+if ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -vn -ar 16000 -ac 1 -f wav "$WAV" 2>/dev/null && [[ -s "$WAV" ]]; then
+  if /opt/whisper/bin/whisper \
+      --model base \
+      --output_format txt \
+      --output_dir "$SCRATCH" \
+      --language en \
+      "$WAV" >/dev/null 2>&1 \
+      && [[ -f "$SCRATCH/audio.txt" ]]; then
+    TRANSCRIPT=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$SCRATCH/audio.txt" | tr -s '[:space:]' ' ')
+  fi
+fi
 
-/opt/whisper/bin/whisper \
-  --model base \
-  --output_format txt \
-  --output_dir "$WHISPER_OUT_DIR" \
-  --language en \
-  "$WAV" >/dev/null 2>&1
+# ── visual ───────────────────────────────────────────────────────────────
+DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$INPUT" 2>/dev/null | head -1)
+DUR=${DUR:-3}
+# Sample at 10/50/90% of duration. For very short clips this still gives
+# three frames close together but distinct.
+declare -a FRAMES=()
+for pct in 0.10 0.50 0.90; do
+  idx=$((${#FRAMES[@]} + 1))
+  t=$(awk "BEGIN {printf \"%.2f\", $DUR * $pct}")
+  out="$SCRATCH/frame_${idx}.jpg"
+  if ffmpeg -hide_banner -loglevel error -y -ss "$t" -i "$INPUT" -vframes 1 -vf scale=512:-1 -q:v 4 "$out" 2>/dev/null && [[ -s "$out" ]]; then
+    FRAMES+=("$out")
+  fi
+done
 
-cat "$WHISPER_OUT_DIR/$(basename "$WAV" .wav).txt"
+DESCRIPTION=""
+if (( ${#FRAMES[@]} > 0 )) && command -v claude >/dev/null 2>&1; then
+  # Single Claude call for all frames — cheaper than per-frame.
+  FRAMELIST=$(printf '%s\n' "${FRAMES[@]}" | paste -sd', ' -)
+  DESCRIPTION=$(timeout 90 claude --print "These are ${#FRAMES[@]} keyframes from a short video, in time order (start, middle, end): ${FRAMELIST}. Read them and describe what's shown across the clip in 2-4 short sentences. Be concrete — name objects, people, setting." 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') || true
+fi
+
+# ── stitch ───────────────────────────────────────────────────────────────
+echo "[Audio]"
+echo "${TRANSCRIPT:-<no speech>}"
+echo
+echo "[Visual]"
+echo "${DESCRIPTION:-<no description>}"
