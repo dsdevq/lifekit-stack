@@ -14,7 +14,11 @@
 services:
 
   openclaw-gateway:
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    build:
+      context: ./openclaw-gateway
+      args:
+        OPENCLAW_BASE_IMAGE: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    image: lifekit-openclaw:local
     restart: unless-stopped
     init: true
     environment:
@@ -85,7 +89,7 @@ services:
       start_period: 20s
 
   openclaw-cli:
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    image: lifekit-openclaw:local
     network_mode: "service:openclaw-gateway"
     depends_on:
       - openclaw-gateway
