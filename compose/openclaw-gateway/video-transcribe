@@ -1,17 +1,20 @@
 #!/bin/bash
 # Summarizes an inbound video for OpenClaw's tools.media.video CLI fallback.
 #
-# Two channels:
+# Two channels, both best-effort:
 #   1. Audio   — ffmpeg strips the audio track → whisper transcribes
 #   2. Visual  — ffmpeg extracts 3 evenly-spaced keyframes →
-#                claude --print describes them in one call
+#                `openclaw infer image describe-many` routes them through
+#                the configured image provider (Anthropic Claude here).
 #
-# Both are best-effort; either side may produce an empty section without
-# failing the run. Output goes to stdout in the shape OpenClaw expects.
+# Visual side uses OpenClaw's first-party CLI rather than shelling out to
+# claude directly, so auth/provider/transport stays consistent with the
+# inbound-photo pipeline. The output is the two labelled sections OpenClaw
+# expects on stdout.
 #
-# Why this exists: Claude (Anthropic) isn't in OpenClaw's video provider
-# matrix (Google/Qwen/Moonshot only), and Denys is on Claude Pro — so we
-# decompose video into the two capabilities we *can* hit cheaply.
+# Why this exists: Claude isn't in OpenClaw's video provider matrix
+# (Google/Qwen/Moonshot only). Decomposing video into audio+keyframes
+# stays on the Pro subscription with no extra API keys.
 
 set -uo pipefail
 
@@ -35,30 +38,43 @@ if ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -vn -ar 16000 -ac 1 -f wav
       --language en \
       "$WAV" >/dev/null 2>&1 \
       && [[ -f "$SCRATCH/audio.txt" ]]; then
-    TRANSCRIPT=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$SCRATCH/audio.txt" | tr -s '[:space:]' ' ')
+    TRANSCRIPT=$(tr -s '[:space:]' ' ' < "$SCRATCH/audio.txt" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   fi
 fi
 
 # ── visual ───────────────────────────────────────────────────────────────
 DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$INPUT" 2>/dev/null | head -1)
 DUR=${DUR:-3}
-# Sample at 10/50/90% of duration. For very short clips this still gives
-# three frames close together but distinct.
-declare -a FRAMES=()
+FRAME_ARGS=()
+COUNT=0
 for pct in 0.10 0.50 0.90; do
-  idx=$((${#FRAMES[@]} + 1))
+  COUNT=$((COUNT + 1))
   t=$(awk "BEGIN {printf \"%.2f\", $DUR * $pct}")
-  out="$SCRATCH/frame_${idx}.jpg"
+  out="$SCRATCH/frame_${COUNT}.jpg"
   if ffmpeg -hide_banner -loglevel error -y -ss "$t" -i "$INPUT" -vframes 1 -vf scale=512:-1 -q:v 4 "$out" 2>/dev/null && [[ -s "$out" ]]; then
-    FRAMES+=("$out")
+    FRAME_ARGS+=(--file "$out")
   fi
 done
 
 DESCRIPTION=""
-if (( ${#FRAMES[@]} > 0 )) && command -v claude >/dev/null 2>&1; then
-  # Single Claude call for all frames — cheaper than per-frame.
-  FRAMELIST=$(printf '%s\n' "${FRAMES[@]}" | paste -sd', ' -)
-  DESCRIPTION=$(timeout 90 claude --print "These are ${#FRAMES[@]} keyframes from a short video, in time order (start, middle, end): ${FRAMELIST}. Read them and describe what's shown across the clip in 2-4 short sentences. Be concrete — name objects, people, setting." 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') || true
+if (( ${#FRAME_ARGS[@]} > 0 )); then
+  JSON=$(timeout 120 node /app/dist/index.js infer image describe-many "${FRAME_ARGS[@]}" --json 2>/dev/null) || JSON=""
+  if [[ -n "$JSON" ]]; then
+    DESCRIPTION=$(python3 - "$JSON" <<'PY' 2>/dev/null
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    parts = []
+    for i, o in enumerate(d.get("outputs", []), 1):
+        txt = (o.get("text") or "").strip()
+        if txt:
+            parts.append(f"Frame {i}: {txt}")
+    print("\n".join(parts))
+except Exception:
+    pass
+PY
+)
+  fi
 fi
 
 # ── stitch ───────────────────────────────────────────────────────────────
