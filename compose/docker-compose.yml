@@ -201,6 +201,14 @@ services:
       - /home/node/.life
       - --telegram-chat
       - ${LIFEKIT_TELEGRAM_CHAT:-default}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pgrep -f "devclaw-orchestrator daemon" >/dev/null
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
   lifekit-curator:
     build:
