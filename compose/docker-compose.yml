@@ -134,6 +134,66 @@ services:
       - node
       - dist/index.js
 
+  lifekit-orchestrator:
+    # Long-running scheduler replacing the OpenClaw cron entries
+    # `task_dispatch_15m` and `curator_30m`. Runs in its own container so
+    # every sweep + supervise tick is pure Python (mechanism), without
+    # spawning a Claude subagent per tick. Image is reused from openclaw
+    # because the orchestrator's cognition nodes shell out to `claude --print`.
+    image: lifekit-openclaw:local
+    depends_on:
+      - openclaw-gateway
+    restart: unless-stopped
+    init: true
+    environment:
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      TZ: ${OPENCLAW_TZ:-UTC}
+      LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-default}
+    volumes:
+      # Orchestrator source — installed editable at container start.
+      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
+      # ~/.life is the store the daemon reaps/dispatches/supervises.
+      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      # Claude CLI session creds — same mounts as openclaw-gateway. Both the
+      # dir and the sibling .claude.json are required for the SDK to recognize
+      # the Pro subscription session.
+      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
+      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # gh CLI auth for the code_task runner.
+      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
+      - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        export NPM_CONFIG_PREFIX=/home/node/.npm-global
+        export PATH="/home/node/.npm-global/bin:/home/node/.orchestrator-venv/bin:$$PATH"
+        if ! command -v claude >/dev/null 2>&1; then
+          mkdir -p /home/node/.npm-global
+          npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+        fi
+        if [ ! -x /home/node/.orchestrator-venv/bin/devclaw-orchestrator ]; then
+          python3 -m venv /home/node/.orchestrator-venv
+          /home/node/.orchestrator-venv/bin/pip install --upgrade pip --quiet
+          /home/node/.orchestrator-venv/bin/pip install -e /home/node/.openclaw/workspace/devclaw/orchestrator
+        fi
+        exec "$$@"
+      - --
+    command:
+      - devclaw-orchestrator
+      - daemon
+      - --life
+      - /home/node/.life
+      - --telegram-chat
+      - ${LIFEKIT_TELEGRAM_CHAT:-default}
+
   lifekit-curator:
     build:
       context: ./curator
