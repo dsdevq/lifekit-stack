@@ -187,11 +187,20 @@ services:
           mkdir -p /home/node/.npm-global
           npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
         fi
-        if [ ! -x /home/node/.orchestrator-venv/bin/devclaw-orchestrator ]; then
+        if [ ! -x /home/node/.orchestrator-venv/bin/pip ]; then
           python3 -m venv /home/node/.orchestrator-venv
           /home/node/.orchestrator-venv/bin/pip install --upgrade pip --quiet
-          /home/node/.orchestrator-venv/bin/pip install -e /home/node/.openclaw/workspace/devclaw/orchestrator
         fi
+        # Re-run the editable install on EVERY container start. This re-pins the
+        # devclaw-orchestrator entry point at the bind-mounted canonical source
+        # under /home/node/.openclaw/workspace/devclaw/orchestrator. A code-task
+        # runner inside the container can run `pip install -e .` from a /tmp
+        # clone, and because this venv's pip is first on PATH it hijacks the
+        # editable target — on next daemon restart the orchestrator would load
+        # code from /tmp instead of the canonical source (observed 2026-05-18).
+        # Re-installing every start is idempotent and fast, and undoes any such
+        # hijack. Do NOT re-add the [ ! -x ... ] guard around this install.
+        /home/node/.orchestrator-venv/bin/pip install -e /home/node/.openclaw/workspace/devclaw/orchestrator --quiet
         exec "$$@"
       - --
     command:
