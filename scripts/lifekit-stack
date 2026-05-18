@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# lifekit-stack — operator entry point for the PC-side workflows.
+#
+# Subcommands:
+#   deploy   push current branch + redeploy on the VPS
+#   migrate  push local OpenClaw + Claude state to a fresh VPS
+#   help     show usage for a subcommand (default if no args)
+
+set -euo pipefail
+
+say() { printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
+
+# ─── help ────────────────────────────────────────────────────────────────────
+
+help_root() {
+  cat <<'EOF'
+lifekit-stack — operator entry point for the PC-side workflows.
+
+Usage:
+  scripts/lifekit-stack <subcommand> [options]
+
+Subcommands:
+  deploy   push current branch and trigger a VPS redeploy
+  migrate  push local OpenClaw + Claude state to a fresh VPS
+  help     show this message, or `help <subcommand>` for subcommand usage
+
+Run `scripts/lifekit-stack help <subcommand>` for subcommand-specific options.
+EOF
+}
+
+help_deploy() {
+  cat <<'EOF'
+lifekit-stack deploy — push current branch and trigger a VPS redeploy.
+
+Run from anywhere inside the lifekit-stack repo. Does:
+  1. git push origin <current-branch>
+  2. ssh to the VPS, git pull, run scripts/deploy.sh
+
+Obsolete once the GH Actions deploy workflow (J) is unblocked — that does
+the same thing automatically on `git push`. Keep this around until then.
+
+Usage:
+  scripts/lifekit-stack deploy             # push + deploy
+  scripts/lifekit-stack deploy --no-push   # deploy what's already on origin/main
+  scripts/lifekit-stack deploy --vps USER@HOST
+
+Environment overrides:
+  VPS               default: denys@100.87.201.43
+  REPO_DIR_REMOTE   default: /srv/lifekit-stack
+EOF
+}
+
+help_migrate() {
+  cat <<'EOF'
+lifekit-stack migrate — push the local OpenClaw + Claude state to a fresh VPS.
+
+Run this ON THE SOURCE MACHINE (the laptop/PC whose OpenClaw daemon you've
+been using). It pushes to the VPS over SSH; the VPS must already be
+bootstrapped (scripts/bootstrap-vps.sh) and reachable.
+
+What it does:
+  1. Validates local sources (~/.openclaw, ~/.claude, ~/.claude.json).
+  2. Stops the VPS gateway so we don't migrate into a running process.
+  3. Backs up the VPS's current /srv/openclaw/config to a timestamped dir.
+  4. Rsyncs Claude CLI session creds (.credentials.json + settings.json
+     from ~/.claude/, plus the sibling ~/.claude.json which holds the
+     oauthAccount field — OpenClaw needs this to treat the session as a
+     Pro subscription rather than a raw API key).
+  5. Rsyncs ~/.openclaw/ to /srv/openclaw/config, excluding host-specific
+     files (openclaw.json, .env, credentials/, telegram/ spool, logs/,
+     and the agent's auth-profiles.json + auth-state.json which are
+     VPS-local).
+  6. Rsyncs ~/.openclaw/workspace/ to /srv/openclaw/workspace, excluding
+     the workspace .git so each host keeps its own history.
+  7. Clears the gateway's auth-state.json so any prior billing/circuit-
+     breaker state doesn't carry over.
+  8. Prints the post-migrate steps (start gateway, models auth login).
+
+Usage:
+  scripts/lifekit-stack migrate [--vps lifekit@HOST] [--dry-run]
+
+Environment overrides:
+  VPS             default: lifekit@lifekit-vps
+  OPENCLAW_HOME   default: $HOME/.openclaw
+  CLAUDE_HOME     default: $HOME/.claude
+  CLAUDE_JSON     default: $HOME/.claude.json
+EOF
+}
+
+# ─── deploy ──────────────────────────────────────────────────────────────────
+
+cmd_deploy() {
+  local VPS="${VPS:-denys@100.87.201.43}"
+  local REPO_DIR_REMOTE="${REPO_DIR_REMOTE:-/srv/lifekit-stack}"
+  local PUSH=1
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-push) PUSH=0; shift ;;
+      --vps) VPS="$2"; shift 2 ;;
+      -h|--help) help_deploy; exit 0 ;;
+      *) echo "Unknown arg: $1" >&2; exit 2 ;;
+    esac
+  done
+
+  local REPO_ROOT BRANCH
+  REPO_ROOT="$(git rev-parse --show-toplevel)"
+  cd "$REPO_ROOT"
+  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
+  if [[ "$PUSH" == "1" ]]; then
+    say "git push origin $BRANCH"
+    git push origin "$BRANCH"
+  fi
+
+  say "deploy on $VPS"
+  # shellcheck disable=SC2029 # $REPO_DIR_REMOTE expanding client-side is intentional
+  ssh "$VPS" "set -e
+    cd $REPO_DIR_REMOTE
+    git fetch origin main
+    git reset --hard origin/main
+    sudo -u lifekit bash scripts/deploy.sh || bash scripts/deploy.sh"
+
+  say "✓ deployed"
+}
+
+# ─── migrate ─────────────────────────────────────────────────────────────────
+
+cmd_migrate() {
+  local VPS="${VPS:-lifekit@lifekit-vps}"
+  local OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+  local CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+  local CLAUDE_JSON="${CLAUDE_JSON:-$HOME/.claude.json}"
+  local DRY=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --vps) VPS="$2"; shift 2 ;;
+      --dry-run) DRY="--dry-run"; shift ;;
+      -h|--help) help_migrate; exit 0 ;;
+      *) echo "Unknown arg: $1" >&2; exit 2 ;;
+    esac
+  done
+
+  [[ -d "$OPENCLAW_HOME" ]] || { echo "Missing $OPENCLAW_HOME"  >&2; exit 1; }
+  [[ -d "$CLAUDE_HOME"   ]] || { echo "Missing $CLAUDE_HOME"    >&2; exit 1; }
+  [[ -f "$CLAUDE_JSON"   ]] || { echo "Missing $CLAUDE_JSON"    >&2; exit 1; }
+  ssh -o BatchMode=yes "$VPS" 'true' \
+    || { echo "Cannot SSH to $VPS (need passwordless key auth)" >&2; exit 1; }
+
+  local TS
+  TS="$(date +%Y%m%d-%H%M%S)"
+
+  say "stopping gateway on $VPS"
+  ssh "$VPS" 'cd /srv/lifekit-stack/compose && \
+    docker compose --env-file /srv/openclaw/config/.env stop openclaw-gateway'
+
+  say "backing up /srv/openclaw/config -> config.bak-$TS"
+  # shellcheck disable=SC2029 # $TS expanding client-side is intentional
+  ssh "$VPS" "cp -a /srv/openclaw/config /srv/openclaw/config.bak-$TS"
+
+  say "migrating Claude CLI session"
+  ssh "$VPS" 'mkdir -p ~/.claude && chmod 700 ~/.claude'
+  rsync -avz $DRY -e ssh \
+    "$CLAUDE_HOME/.credentials.json" \
+    "$CLAUDE_HOME/settings.json" \
+    "$VPS:.claude/"
+  rsync -avz $DRY -e ssh "$CLAUDE_JSON" "$VPS:.claude.json"
+
+  say "migrating OpenClaw state (identity, memory, sessions, flows, tasks, ...)"
+  rsync -avz $DRY --delete-after -e ssh \
+    --exclude='workspace/' \
+    --exclude='openclaw.json' \
+    --exclude='openclaw.json.bak*' \
+    --exclude='openclaw.json.last-good' \
+    --exclude='.env' \
+    --exclude='credentials/' \
+    --exclude='telegram/' \
+    --exclude='logs/' \
+    --exclude='update-check.json' \
+    --exclude='tui/' \
+    --exclude='agents/main/agent/auth-profiles.json' \
+    --exclude='agents/main/agent/auth-state.json' \
+    "$OPENCLAW_HOME/" "$VPS:/srv/openclaw/config/"
+
+  say "migrating OpenClaw workspace (skills + soul files)"
+  rsync -avz $DRY --delete-after -e ssh \
+    --exclude='.git/' \
+    "$OPENCLAW_HOME/workspace/" "$VPS:/srv/openclaw/workspace/"
+
+  say "clearing auth-state circuit-breaker"
+  ssh "$VPS" 'echo "{\"version\":1,\"usageStats\":{}}" \
+    > /srv/openclaw/config/agents/main/agent/auth-state.json'
+
+  say "✓ migration complete"
+  cat <<EOF
+
+Next steps on the VPS:
+
+  ssh $VPS
+  cd /srv/lifekit-stack/compose
+  docker compose --env-file /srv/openclaw/config/.env up -d openclaw-gateway
+
+  # If this is the first migrate (auth-profiles.json doesn't exist), wire
+  # the Anthropic provider to use Claude CLI auth (one-time, needs a TTY):
+  docker compose --env-file /srv/openclaw/config/.env exec openclaw-gateway sh -c \\
+    'export PATH=/home/node/.npm-global/bin:\$PATH; \\
+     openclaw models auth login --provider anthropic --method cli --set-default'
+
+Then test by DM'ing your bot.
+
+Backup of pre-migrate VPS state: /srv/openclaw/config.bak-$TS
+EOF
+}
+
+# ─── dispatch ────────────────────────────────────────────────────────────────
+
+main() {
+  local sub="${1:-help}"
+  shift || true
+  case "$sub" in
+    deploy)  cmd_deploy "$@" ;;
+    migrate) cmd_migrate "$@" ;;
+    help|-h|--help)
+      case "${1:-}" in
+        deploy)  help_deploy ;;
+        migrate) help_migrate ;;
+        "")      help_root ;;
+        *)       echo "Unknown subcommand: $1" >&2; help_root >&2; exit 2 ;;
+      esac
+      ;;
+    *)
+      echo "Unknown subcommand: $sub" >&2
+      help_root >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"
