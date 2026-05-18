@@ -150,6 +150,14 @@ services:
       OPENCLAW_HOME: /home/node
       TZ: ${OPENCLAW_TZ:-UTC}
       LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-default}
+      # Wire git credential helper via env, not gitconfig — the .gitconfig
+      # bind-mount is read-only and `gh auth setup-git` would fail to write
+      # to it ("Device or resource busy" because of how bind-mounted files
+      # interact with git's atomic-rewrite). These vars make every git op
+      # use gh for credentials without touching any file.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.helper
+      GIT_CONFIG_VALUE_0: "!gh auth git-credential"
     volumes:
       # Orchestrator source — installed editable at container start.
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
