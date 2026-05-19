@@ -94,6 +94,18 @@ lifekit-stack/
 └── PRIVATE.md            # audit checklist — what NEVER belongs in this repo
 ```
 
+## Dashboard access
+
+The optional `lifekit-dashboard` service ships a read-only web UI surfacing state from `~/.life/` and `~/.openclaw/workspace/` (crons, tasks, proposals, PRs, gaps, recent runs). It is built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard) — `scripts/deploy.sh` handles the clone/pull, so `gh auth login` must already be set up on the host as the `lifekit` user.
+
+The container binds to `127.0.0.1:${LIFEKIT_DASHBOARD_PORT:-18790}` only — no public ingress. External access goes through Tailscale serve. After `deploy.sh` succeeds, run once on the VPS:
+
+```bash
+sudo tailscale serve --bg --https=443 / http://127.0.0.1:18790
+```
+
+The dashboard is then reachable at `https://<hostname>.<tailnet>.ts.net/` from any device on your tailnet. `tailscale serve status` lists the resulting URL.
+
 ## Updating
 
 ```bash
