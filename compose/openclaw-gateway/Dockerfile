@@ -47,4 +47,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Headless-Chromium system libraries, required by the Playwright MCP and the
+# chrome-devtools MCP. Without these the bundled Chromium fails to launch on a
+# bare debian-slim base with cryptic "error while loading shared libraries"
+# diagnostics. Install before the USER node switch so apt has the privileges
+# it needs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+        libxcomposite1 libxdamage1 libatspi2.0-0 libdrm2 libxkbcommon0 \
+        libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
+    && rm -rf /var/lib/apt/lists/*
+
 USER node
+
+# Pre-fetch the Playwright Chromium build into the runtime user's cache so
+# the playwright-mcp / chrome-devtools-mcp servers don't have to download
+# ~150MB on first invocation (and so first calls work without network).
+# Runs as `node` so the browser lands under /home/node/.cache/ms-playwright.
+RUN npx -y playwright@latest install chromium
