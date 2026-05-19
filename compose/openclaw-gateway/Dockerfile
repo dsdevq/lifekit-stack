@@ -10,6 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         python3 \
         python3-venv \
+        make \
+        g++ \
+        libvips-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Isolated venv keeps us out of PEP 668 territory and away from any
