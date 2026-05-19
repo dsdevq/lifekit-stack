@@ -91,6 +91,37 @@ Common causes:
 3. **OpenClaw OOM** — `dmesg | grep -i oom`. If yes, scale up the VPS.
 4. **Anthropic auth expired** — `docker compose exec openclaw-cli claude auth status`. Re-login if needed.
 
+## When a skill says "command not found" or "sharp: missing native binary"
+
+Symptom: a skill that worked on the laptop fails on the VPS with `command not
+found: life-state`, or `Error: Could not load the "sharp" module using the
+linux-arm64 runtime` (nutrition-claw and any other skill with native deps).
+
+Root cause: `rsync` from the laptop copies the skill source, but skips the
+platform-specific bits — `node_modules/` built for the wrong arch, or a CLI
+binary that was `npm install -g`'d on the laptop and never replayed on the
+VPS.
+
+`scripts/deploy.sh` now reinstalls every skill's `package.json` inside the
+gateway container after rsync, and `compose/openclaw-gateway/Dockerfile`
+bakes in `python3 / make / g++ / libvips-dev` so native modules (sharp,
+better-sqlite3, etc.) can rebuild on-host. That covers the per-skill
+`node_modules` case automatically — re-run `scripts/deploy.sh` and the
+`sharp` error should clear.
+
+Skill CLIs that live outside this repo (e.g. `life-state`, which is built
+from `~/projects/life-state` on the maintainer's laptop) are NOT handled
+automatically — they have to be installed once on the VPS after the first
+rsync. Inside the gateway container:
+
+```bash
+docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env \
+  exec openclaw-gateway npm install -g /home/node/.openclaw/workspace/external/life-state
+```
+
+…and then restart the gateway. If `external/life-state` isn't there yet,
+rsync it across alongside the skills directory.
+
 ## When `queue.jsonl` grows without draining
 
 Symptom: `/srv/life/queue.jsonl` keeps growing; domain files don't update.
