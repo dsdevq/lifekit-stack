@@ -94,6 +94,7 @@ lifekit-stack/
 └── PRIVATE.md            # audit checklist — what NEVER belongs in this repo
 ```
 
+<<<<<<< HEAD
 ## Dashboard access
 
 The optional `lifekit-dashboard` service ships a read-only web UI surfacing state from `~/.life/` and `~/.openclaw/workspace/` (crons, tasks, proposals, PRs, gaps, recent runs). It is built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard) — `scripts/deploy.sh` handles the clone/pull, so `gh auth login` must already be set up on the host as the `lifekit` user.
@@ -105,6 +106,16 @@ sudo tailscale serve --bg --https=443 / http://127.0.0.1:18790
 ```
 
 The dashboard is then reachable at `https://<hostname>.<tailnet>.ts.net/` from any device on your tailnet. `tailscale serve status` lists the resulting URL.
+=======
+## Auto-redeploy
+
+The `lifekit-dashboard` container auto-redeploys every 5 minutes from upstream `main` via a systemd timer (`lifekit-dashboard-redeploy.timer`). The timer is installed by `scripts/bootstrap-vps.sh`; the underlying script (`scripts/redeploy/lifekit-dashboard-redeploy.sh`) checks `dsdevq/lifekit-dashboard`'s `origin/main` against the local checkout and only rebuilds when there's a new commit (silent on no-op).
+
+- **Force a redeploy now:** `sudo systemctl start lifekit-dashboard-redeploy.service`
+- **View recent runs:** `journalctl -u lifekit-dashboard-redeploy.service -n 50`
+
+This is currently scoped to `lifekit-dashboard` only. A generic, config-driven multi-repo version will land when a second repo needs the same treatment.
+>>>>>>> 62e15f8 (Add pull-based auto-redeploy systemd timer for lifekit-dashboard)
 
 ## Updating
 
