@@ -3,11 +3,13 @@
 
 FROM node:22-bookworm-slim AS base
 
-# System deps + Python (Claude CLI is npm-distributed and needs Node 18+)
+# System deps + Python (Claude CLI is npm-distributed and needs Node 18+).
+# tini is intentionally omitted: the compose service declares `init: true`,
+# which makes Docker inject docker-init as PID 1. Running our own tini on top
+# of that produced the "tini is not running as PID 1" warning on every boot.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
-        tini \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -31,6 +33,7 @@ ENV LIFEKIT_LIFE_DIR=/srv/life \
     LIFEKIT_LOG_LEVEL=INFO \
     PYTHONUNBUFFERED=1
 
-# tini = PID 1, handles signals + zombie reap correctly inside Docker
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# PID 1 / signal handling is supplied by the compose-level `init: true` flag,
+# which runs docker-init as PID 1 in front of our process — no need to wrap
+# again here.
 CMD ["python3", "/app/curator.py"]
