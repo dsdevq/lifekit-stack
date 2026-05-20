@@ -26,6 +26,9 @@ logger = logging.getLogger("lifekit.curator")
 
 LIFE_DIR = Path(os.getenv("LIFEKIT_LIFE_DIR", "/srv/life"))
 QUEUE_FILE = Path(os.getenv("LIFEKIT_QUEUE_FILE", str(LIFE_DIR / "queue.jsonl")))
+DEAD_LETTER_FILE = Path(
+    os.getenv("LIFEKIT_DEAD_LETTER_FILE", str(LIFE_DIR / "queue.dead-letter.jsonl"))
+)
 CONSOLIDATION_MARKER = Path(
     os.getenv("LIFEKIT_CONSOLIDATION_MARKER", str(LIFE_DIR / ".last_consolidation"))
 )
@@ -188,6 +191,43 @@ def enqueue(goal: str, response: str) -> None:
         logger.error("failed to write queue entry: %s", exc)
 
 
+def _entry_id_short(entry: object) -> str:
+    """Return a short, log-safe identifier for an entry, even when malformed."""
+    if isinstance(entry, dict):
+        eid = entry.get("id")
+        if isinstance(eid, str) and eid:
+            return eid[:8]
+    return "<no-id>"
+
+
+def _log_skip(entry: object, exc: object) -> None:
+    logger.warning("skip queue entry %s: %s", _entry_id_short(entry), exc)
+
+
+def _quarantine(entry: object) -> None:
+    """Append a poison entry to the dead-letter file. Never raises."""
+    try:
+        DEAD_LETTER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "quarantined_at": datetime.now(timezone.utc).isoformat(),
+            "entry": entry,
+        }
+        with DEAD_LETTER_FILE.open("a") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+    except Exception as exc:
+        logger.error("failed to quarantine entry %s: %s", _entry_id_short(entry), exc)
+
+
+def _process_one(entry: dict) -> None:
+    """Run the LLM extraction for a single queue entry. May raise."""
+    prompt = MEMORIZE_PROMPT.format(
+        goal=entry["goal"],
+        response=entry["response"],
+        life_dir=LIFE_DIR,
+    )
+    claude_run(prompt)
+
+
 def process_queue() -> None:
     if not QUEUE_FILE.exists():
         return
@@ -195,7 +235,7 @@ def process_queue() -> None:
     with _queue_lock:
         raw = QUEUE_FILE.read_text()
 
-    entries = []
+    entries: list = []
     for line in raw.splitlines():
         line = line.strip()
         if not line:
@@ -205,26 +245,27 @@ def process_queue() -> None:
         except json.JSONDecodeError:
             logger.warning("skipping malformed queue line")
 
-    pending = [e for e in entries if not e.get("done")]
+    pending = [e for e in entries if isinstance(e, dict) and not e.get("done")]
     if not pending:
         return
 
     logger.info("processing %d pending entries", len(pending))
 
+    # Process each entry in isolation. A single poison entry must never take
+    # down the loop — that's what kept the container restarting (#a350).
     for entry in pending:
         try:
-            prompt = MEMORIZE_PROMPT.format(
-                goal=entry["goal"],
-                response=entry["response"],
-                life_dir=LIFE_DIR,
-            )
-            claude_run(prompt)
+            _process_one(entry)
             entry["done"] = True
-            logger.info("✓ %s", entry["id"][:8])
+            logger.info("✓ %s", _entry_id_short(entry))
         except Exception as exc:
-            logger.warning("✗ %s — %s", entry["id"][:8], exc)
+            _log_skip(entry, exc)
+            _quarantine(entry)
+            # Mark done so it's dropped from queue.jsonl below — otherwise
+            # we'd re-process the same poison on every wake-up.
+            entry["done"] = True
 
-    remaining = [e for e in entries if not e.get("done")]
+    remaining = [e for e in entries if not (isinstance(e, dict) and e.get("done"))]
     with _queue_lock:
         with QUEUE_FILE.open("w") as f:
             for e in remaining:
