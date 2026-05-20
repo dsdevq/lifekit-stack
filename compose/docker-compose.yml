@@ -1,9 +1,12 @@
 # lifekit-stack compose file.
 #
-# Defines three services:
-#   openclaw-gateway — the runtime gateway (channels, cron, skills, agent)
-#   openclaw-cli     — same image, used for one-shot `openclaw <command>` invocations
-#   lifekit-curator  — our queue-drain memory maintainer (vendored from swarm)
+# Defines six services:
+#   openclaw-gateway     — the runtime gateway (channels, cron, skills, agent); loopback bind on 18789
+#   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations
+#   lifekit-orchestrator — long-running Python scheduler (sweep + supervise) replacing the OpenClaw cron entries
+#   lifekit-curator      — queue-drain memory maintainer; defensive parsing with dead-letter quarantine
+#   lifekit-dashboard    — read-only web UI over ~/.life and ~/.openclaw/workspace; loopback bind on 18790
+#   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
 #
 # Run from the repo root after `scripts/bootstrap-vps.sh` has set up the host:
 #   cd /srv/lifekit-stack && ./scripts/deploy.sh
@@ -11,8 +14,10 @@
 # Or directly:
 #   docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env up -d --build
 #
-# Uniform service policy (log rotation, restart circuit breaker, memory cap) is
-# defined in the x-policy anchor below and merged into every long-lived service.
+# Uniform service policy (log rotation 50MB×3, restart on-failure:5, per-service
+# memory cap) is defined in the x-policy anchor below and merged into every
+# long-lived service via `<<: *policy`. Individual services override the memory
+# cap in their own `deploy.resources.limits.memory` block where needed.
 # Rationale: see ~/.life/incidents/2026-05-20-vps-freeze.md — the full postmortem
 # for the VPS freeze that motivated this hardening pass.
 ---
