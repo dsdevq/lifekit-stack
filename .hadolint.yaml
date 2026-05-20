@@ -1,0 +1,5 @@
+# DL3008: "Pin versions in apt get install."
+#   Pinning every apt package is overkill for a single-host personal stack;
+#   apt unattended-upgrades + Hetzner base image cadence handle this already.
+ignored:
+  - DL3008

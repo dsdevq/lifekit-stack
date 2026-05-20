@@ -32,6 +32,10 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GH Actions Artifact storage is quota-blocked by the
+          # account-lock; we don't need the SARIF upload — gitleaks's
+          # own exit code is the gate.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
 
   deploy:
     name: Deploy to VPS
