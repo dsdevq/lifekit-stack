@@ -53,9 +53,9 @@ class ProcessQueueDefensiveTests(unittest.TestCase):
 
         self.assertTrue(self.dead_letter.exists(), "poison entry must be quarantined")
         dead = [
-            json.loads(l)
-            for l in self.dead_letter.read_text().splitlines()
-            if l.strip()
+            json.loads(line)
+            for line in self.dead_letter.read_text().splitlines()
+            if line.strip()
         ]
         self.assertEqual(len(dead), 1)
         self.assertEqual(dead[0]["entry"]["id"], "aaaaaaaa-1111")
@@ -77,9 +77,9 @@ class ProcessQueueDefensiveTests(unittest.TestCase):
 
         self.assertTrue(self.dead_letter.exists())
         dead = [
-            json.loads(l)
-            for l in self.dead_letter.read_text().splitlines()
-            if l.strip()
+            json.loads(line)
+            for line in self.dead_letter.read_text().splitlines()
+            if line.strip()
         ]
         self.assertEqual(len(dead), 1)
         self.assertNotIn("id", dead[0]["entry"])
@@ -104,9 +104,9 @@ class ProcessQueueDefensiveTests(unittest.TestCase):
         self.assertEqual(self.queue_file.read_text().strip(), "")
 
         dead = [
-            json.loads(l)
-            for l in self.dead_letter.read_text().splitlines()
-            if l.strip()
+            json.loads(line)
+            for line in self.dead_letter.read_text().splitlines()
+            if line.strip()
         ]
         self.assertEqual(len(dead), 2)
 
