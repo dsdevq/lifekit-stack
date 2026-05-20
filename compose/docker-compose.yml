@@ -2,7 +2,7 @@
 #
 # Defines three services:
 #   openclaw-gateway — the runtime gateway (channels, cron, skills, agent)
-#   openclaw-cli     — same image, used for one-shot `openclaw <command>` invocations
+#   openclaw-cli     — same image, on-demand only (compose run --rm). Used by deploy.sh for post-deploy doctor/health smoke checks.
 #   lifekit-curator  — our queue-drain memory maintainer (vendored from swarm)
 #
 # Run from the repo root after `scripts/bootstrap-vps.sh` has set up the host:
@@ -117,6 +117,7 @@ services:
 
   openclaw-cli:
     <<: *policy
+    profiles: [cli]
     image: lifekit-openclaw:local
     network_mode: "service:openclaw-gateway"
     depends_on:
