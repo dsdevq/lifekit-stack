@@ -36,6 +36,20 @@ fi
 say "git pull"
 git pull --ff-only
 
+# ─── lifekit-dashboard: VPS-local clone ──────────────────────────────────────
+#
+# The dashboard image is built from a VPS-local clone of dsdevq/lifekit-dashboard
+# (not vendored into this repo). gh CLI must be authed on the host as the
+# lifekit user so the private-repo clone works.
+
+DASHBOARD_DIR="${LIFEKIT_DASHBOARD_DIR:-/srv/lifekit-dashboard}"
+say "lifekit-dashboard: sync ${DASHBOARD_DIR}"
+if [ ! -d "${DASHBOARD_DIR}/.git" ]; then
+  gh repo clone dsdevq/lifekit-dashboard "${DASHBOARD_DIR}"
+else
+  git -C "${DASHBOARD_DIR}" pull --ff-only
+fi
+
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 say "docker compose up -d --build"

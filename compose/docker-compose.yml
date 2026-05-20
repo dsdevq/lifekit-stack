@@ -210,6 +210,42 @@ services:
       retries: 5
       start_period: 60s
 
+  lifekit-dashboard:
+    # Read-only UI surfacing state from ~/.life and ~/.openclaw/workspace.
+    # Built from a VPS-local clone of dsdevq/lifekit-dashboard (see
+    # scripts/deploy.sh) so the stack repo doesn't vendor the dashboard tree.
+    build:
+      context: ${LIFEKIT_DASHBOARD_DIR:-/srv/lifekit-dashboard}
+    image: lifekit-dashboard:local
+    restart: unless-stopped
+    init: true
+    environment:
+      # The dashboard middleware reads OPENCLAW_GATEWAY_TOKEN (not a
+      # dashboard-specific name) so it can validate gateway-issued requests
+      # against the same shared secret openclaw-gateway uses.
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      ASPNETCORE_URLS: http://+:8080
+      LIFEKIT_LIFE_ROOT: /life
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/life:ro
+      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/openclaw-workspace:ro
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${LIFEKIT_DASHBOARD_PORT:-18790}:8080"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   lifekit-curator:
     build:
       context: ./curator
