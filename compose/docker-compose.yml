@@ -220,7 +220,12 @@ services:
       start_period: 60s
 
   lifekit-dashboard:
-    # Read-only UI surfacing state from ~/.life and ~/.openclaw/workspace.
+    # UI surfacing state from ~/.life and ~/.openclaw/workspace.
+    # The /life mount is read-write because the dashboard performs
+    # approve/reject mutations on proposals (ProposalActionsService moves
+    # files into proposals-approved/ and rewrites proposals.md). The
+    # /openclaw-workspace mount stays read-only — the dashboard only reads
+    # session/agent state from it.
     # Built from a VPS-local clone of dsdevq/lifekit-dashboard (see
     # scripts/deploy.sh) so the stack repo doesn't vendor the dashboard tree.
     build:
@@ -237,7 +242,7 @@ services:
       LIFEKIT_LIFE_ROOT: /life
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/life:ro
+      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/life
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/openclaw-workspace:ro
     cap_drop:
       - NET_RAW
