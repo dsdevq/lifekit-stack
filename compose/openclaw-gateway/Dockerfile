@@ -6,6 +6,9 @@ FROM ${OPENCLAW_BASE_IMAGE}
 
 USER root
 
+# Enforce pipefail in any RUN that pipes commands (hadolint DL4006).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         python3 \

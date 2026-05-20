@@ -18,7 +18,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,9 +26,15 @@ logger = logging.getLogger("lifekit.curator")
 
 LIFE_DIR = Path(os.getenv("LIFEKIT_LIFE_DIR", "/srv/life"))
 QUEUE_FILE = Path(os.getenv("LIFEKIT_QUEUE_FILE", str(LIFE_DIR / "queue.jsonl")))
-CONSOLIDATION_MARKER = Path(os.getenv("LIFEKIT_CONSOLIDATION_MARKER", str(LIFE_DIR / ".last_consolidation")))
-IMPROVEMENTS_FILE = Path(os.getenv("LIFEKIT_IMPROVEMENTS_FILE", str(LIFE_DIR / "improvements.md")))
-CONSOLIDATION_INTERVAL = int(os.getenv("LIFEKIT_CONSOLIDATION_INTERVAL_SECONDS", str(24 * 60 * 60)))
+CONSOLIDATION_MARKER = Path(
+    os.getenv("LIFEKIT_CONSOLIDATION_MARKER", str(LIFE_DIR / ".last_consolidation"))
+)
+IMPROVEMENTS_FILE = Path(
+    os.getenv("LIFEKIT_IMPROVEMENTS_FILE", str(LIFE_DIR / "improvements.md"))
+)
+CONSOLIDATION_INTERVAL = int(
+    os.getenv("LIFEKIT_CONSOLIDATION_INTERVAL_SECONDS", str(24 * 60 * 60))
+)
 WAKE_INTERVAL = int(os.getenv("LIFEKIT_WAKE_INTERVAL_SECONDS", "900"))  # 15 min
 CLAUDE_BIN = os.getenv("LIFEKIT_CLAUDE_BIN", "claude")
 CLAUDE_TIMEOUT = int(os.getenv("LIFEKIT_CLAUDE_TIMEOUT_SECONDS", "180"))
@@ -156,7 +161,9 @@ def claude_run(prompt: str, timeout: int = CLAUDE_TIMEOUT) -> str:
         timeout=timeout,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"claude CLI failed (exit {result.returncode}): {result.stderr[:500]}")
+        raise RuntimeError(
+            f"claude CLI failed (exit {result.returncode}): {result.stderr[:500]}"
+        )
     return result.stdout
 
 
@@ -237,7 +244,9 @@ def consolidation_due() -> bool:
 def run_consolidation() -> None:
     logger.info("dream cycle starting")
     try:
-        claude_run(CONSOLIDATE_PROMPT.format(life_dir=LIFE_DIR), timeout=CLAUDE_TIMEOUT * 2)
+        claude_run(
+            CONSOLIDATE_PROMPT.format(life_dir=LIFE_DIR), timeout=CLAUDE_TIMEOUT * 2
+        )
         CONSOLIDATION_MARKER.parent.mkdir(parents=True, exist_ok=True)
         CONSOLIDATION_MARKER.write_text(str(datetime.now(timezone.utc).timestamp()))
         logger.info("dream cycle complete")
@@ -246,7 +255,12 @@ def run_consolidation() -> None:
 
 
 def loop() -> None:
-    logger.info("curator started — life_dir=%s queue=%s wake=%ds", LIFE_DIR, QUEUE_FILE, WAKE_INTERVAL)
+    logger.info(
+        "curator started — life_dir=%s queue=%s wake=%ds",
+        LIFE_DIR,
+        QUEUE_FILE,
+        WAKE_INTERVAL,
+    )
     process_queue()  # drain leftovers from any previous run
     while True:
         _new_work.wait(timeout=WAKE_INTERVAL)
