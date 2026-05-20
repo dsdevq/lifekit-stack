@@ -1,0 +1,9 @@
+[Unit]
+Description=Redeploy lifekit-dashboard if upstream main has new commits
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=lifekit
+ExecStart=/usr/local/bin/lifekit-dashboard-redeploy.sh

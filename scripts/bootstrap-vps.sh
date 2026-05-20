@@ -109,6 +109,18 @@ else
   sudo -u "$LIFEKIT_USER" git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
 
+# ─── Auto-redeploy timer for lifekit-dashboard ────────────────────────────────
+
+say "Installing lifekit-dashboard auto-redeploy script + systemd units"
+install -m 755 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.sh" \
+  /usr/local/bin/lifekit-dashboard-redeploy.sh
+install -m 644 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.service" \
+  /etc/systemd/system/lifekit-dashboard-redeploy.service
+install -m 644 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.timer" \
+  /etc/systemd/system/lifekit-dashboard-redeploy.timer
+systemctl daemon-reload
+systemctl enable --now lifekit-dashboard-redeploy.timer
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
 say "Host bootstrap complete."
