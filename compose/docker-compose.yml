@@ -278,3 +278,47 @@ services:
       - NET_ADMIN
     security_opt:
       - no-new-privileges:true
+
+  google-workspace-mcp:
+    # taylorwilsdon/google_workspace_mcp — single-user, streamable-http on :8000.
+    # OpenClaw gateway reaches it via service DNS at http://google-workspace-mcp:8000/mcp/.
+    # Pin to a release tag; bump intentionally. See docs/google-mcp-setup.md.
+    image: ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0
+    restart: unless-stopped
+    init: true
+    environment:
+      # OAuth client (Desktop type) from the user's Google Cloud project.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      # Single-user mode: identity of the Google account that owns the refresh token.
+      USER_GOOGLE_EMAIL: ${USER_GOOGLE_EMAIL:-}
+      # Service selection. Default mirrors the README, space- or comma-separated both work.
+      # Upstream Dockerfile reads `TOOLS`; we expose the same value under the documented
+      # `WORKSPACE_MCP_TOOLS` name (per upstream env reference) for forward-compat.
+      WORKSPACE_MCP_TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
+      TOOLS: ${WORKSPACE_MCP_TOOLS:-gmail drive calendar docs sheets tasks}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      # Refresh-token store. Upstream image runs as non-root user `app`, so the
+      # default credentials dir is /home/app/.google_workspace_mcp/credentials —
+      # NOT /root/... Document the divergence in docs/google-mcp-setup.md.
+      # Host dir is created by scripts/google-mcp-bootstrap.sh.
+      - /srv/google-workspace-mcp/credentials:/home/app/.google_workspace_mcp/credentials
+    # Internal-only — gateway reaches us via the compose network DNS name.
+    # No `ports:` mapping: do not publish to the host.
+    expose:
+      - "8000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://localhost:8000/health
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

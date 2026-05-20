@@ -1,0 +1,6 @@
+{
+  "_comment": "Merge this object into the `mcp.servers` array of /srv/openclaw/config/openclaw.json on the VPS so openclaw-gateway connects to the google-workspace-mcp sibling container on startup. The live openclaw.json is host-managed (gitignored) — this file is the canonical snippet for that entry. See docs/google-mcp-setup.md.",
+  "id": "google-workspace",
+  "transport": "streamable-http",
+  "url": "http://google-workspace-mcp:8000/mcp/"
+}
