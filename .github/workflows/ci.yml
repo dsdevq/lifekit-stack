@@ -9,7 +9,7 @@ on:
 jobs:
   lint:
     name: Pre-commit (gitleaks, yamllint, shellcheck, hadolint, ruff)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,7 +23,7 @@ jobs:
 
   gitleaks-full:
     name: Gitleaks full-history scan
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,38 +37,20 @@ jobs:
     name: Deploy to VPS
     needs: [lint, gitleaks-full]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     concurrency:
       group: deploy-vps
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Join tailnet (ephemeral)
-        uses: tailscale/github-action@v3
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-          hostname: gh-runner-${{ github.run_id }}
-          version: latest
-
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "${{ vars.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
-
       - name: Deploy
         run: |
-          ssh -i ~/.ssh/id_deploy \
-              -o StrictHostKeyChecking=accept-new \
-              -o ServerAliveInterval=15 \
-              lifekit@${{ vars.VPS_HOST }} \
-              'cd /srv/lifekit-stack && git fetch origin main && git reset --hard origin/main && bash scripts/deploy.sh'
+          cd /srv/lifekit-stack
+          git fetch origin main
+          git reset --hard origin/main
+          bash scripts/deploy.sh
 
-      - name: Smoke check (gateway health)
+      - name: Smoke check
         run: |
-          ssh -i ~/.ssh/id_deploy \
-              lifekit@${{ vars.VPS_HOST }} \
-              'cd /srv/lifekit-stack/compose && docker compose ps --format "{{.Service}}\t{{.State}}\t{{.Status}}"'
+          cd /srv/lifekit-stack
+          docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env ps \
+            --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
