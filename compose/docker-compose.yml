@@ -10,17 +10,39 @@
 #
 # Or directly:
 #   docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env up -d --build
+#
+# Uniform service policy (log rotation, restart circuit breaker, memory cap) is
+# defined in the x-policy anchor below and merged into every long-lived service.
+# Rationale: see ~/.life/incidents/2026-05-20-vps-freeze.md — the full postmortem
+# for the VPS freeze that motivated this hardening pass.
 ---
+x-policy:
+  policy: &policy
+    init: true
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
 services:
 
   openclaw-gateway:
+    <<: *policy
     build:
       context: ./openclaw-gateway
       args:
         OPENCLAW_BASE_IMAGE: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     image: lifekit-openclaw:local
-    restart: unless-stopped
-    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     environment:
       HOME: /home/node
       OPENCLAW_HOME: /home/node
@@ -94,11 +116,15 @@ services:
       start_period: 20s
 
   openclaw-cli:
+    <<: *policy
     image: lifekit-openclaw:local
     network_mode: "service:openclaw-gateway"
     depends_on:
       - openclaw-gateway
-    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     stdin_open: true
     tty: true
     environment:
@@ -135,6 +161,7 @@ services:
       - dist/index.js
 
   lifekit-orchestrator:
+    <<: *policy
     # Long-running scheduler replacing the OpenClaw cron entries
     # `task_dispatch_15m` and `curator_30m`. Runs in its own container so
     # every sweep + supervise tick is pure Python (mechanism), without
@@ -143,8 +170,6 @@ services:
     image: lifekit-openclaw:local
     depends_on:
       - openclaw-gateway
-    restart: unless-stopped
-    init: true
     environment:
       HOME: /home/node
       OPENCLAW_HOME: /home/node
@@ -220,14 +245,17 @@ services:
       start_period: 60s
 
   lifekit-dashboard:
+    <<: *policy
     # Read-only UI surfacing state from ~/.life and ~/.openclaw/workspace.
     # Built from a VPS-local clone of dsdevq/lifekit-dashboard (see
     # scripts/deploy.sh) so the stack repo doesn't vendor the dashboard tree.
     build:
       context: ${LIFEKIT_DASHBOARD_DIR:-/srv/lifekit-dashboard}
     image: lifekit-dashboard:local
-    restart: unless-stopped
-    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     environment:
       # The dashboard middleware reads OPENCLAW_GATEWAY_TOKEN (not a
       # dashboard-specific name) so it can validate gateway-issued requests
@@ -256,11 +284,14 @@ services:
       start_period: 20s
 
   lifekit-curator:
+    <<: *policy
     build:
       context: ./curator
     image: lifekit-curator:local
-    restart: unless-stopped
-    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     environment:
       LIFEKIT_LIFE_DIR: /srv/life
       LIFEKIT_QUEUE_FILE: /srv/life/queue.jsonl
@@ -280,12 +311,15 @@ services:
       - no-new-privileges:true
 
   google-workspace-mcp:
+    <<: *policy
     # taylorwilsdon/google_workspace_mcp — single-user, streamable-http on :8000.
     # OpenClaw gateway reaches it via service DNS at http://google-workspace-mcp:8000/mcp/.
     # Pin to a release tag; bump intentionally. See docs/google-mcp-setup.md.
     image: ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0
-    restart: unless-stopped
-    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     environment:
       # OAuth client (Desktop type) from the user's Google Cloud project.
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
