@@ -85,10 +85,19 @@ fi
 
 DASHBOARD_DIR="${LIFEKIT_DASHBOARD_DIR:-/srv/lifekit-dashboard}"
 say "lifekit-dashboard: sync ${DASHBOARD_DIR}"
-if [ ! -d "${DASHBOARD_DIR}/.git" ]; then
-  gh repo clone dsdevq/lifekit-dashboard "${DASHBOARD_DIR}"
-else
+# `git pull` runs from a non-interactive `sudo -u lifekit -H bash -lc "..."`
+# subshell, where gh's git-credential-helper cannot prompt. Bake the gh token
+# into the remote URL as x-access-token so plain `git pull` authenticates
+# headlessly. Idempotent: re-running just resets the URL to the same value.
+TOKEN="$(gh auth token)"
+if [ -d "${DASHBOARD_DIR}/.git" ]; then
+  git -C "${DASHBOARD_DIR}" remote set-url origin \
+    "https://x-access-token:${TOKEN}@github.com/dsdevq/lifekit-dashboard.git"
   git -C "${DASHBOARD_DIR}" pull --ff-only
+else
+  gh repo clone dsdevq/lifekit-dashboard "${DASHBOARD_DIR}"
+  git -C "${DASHBOARD_DIR}" remote set-url origin \
+    "https://x-access-token:${TOKEN}@github.com/dsdevq/lifekit-dashboard.git"
 fi
 
 # ─── modules.yaml → /srv/life/system/ ───────────────────────────────────────

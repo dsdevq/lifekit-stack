@@ -57,7 +57,26 @@ fi
 say "Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg ufw git rsync sshfs python3 python3-venv
+apt-get install -y -qq ca-certificates curl gnupg ufw git rsync sshfs python3 python3-venv gh
+
+# ─── Swap (4G) ────────────────────────────────────────────────────────────────
+# The 2026-05-20 cax11 freeze postmortem flagged "zero swap" as one of three
+# failure amplifiers. 4G gives the OOM killer breathing room on small VPS
+# plans (Hetzner cax11, Netcup VPS 2000 ARM G11). Idempotent: skipped if
+# /swapfile is already active.
+
+if swapon --show=NAME --noheadings | grep -qx /swapfile; then
+  say "Swap already active on /swapfile, skipping"
+else
+  say "Creating 4G /swapfile"
+  fallocate -l 4G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  if ! grep -qE '^/swapfile[[:space:]]' /etc/fstab; then
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  fi
+fi
 
 # ─── lifekit user ─────────────────────────────────────────────────────────────
 
@@ -90,7 +109,7 @@ else
 fi
 
 say "Joining tailnet as $TAILSCALE_HOSTNAME"
-tailscale up --authkey="$TAILSCALE_AUTH_KEY" --hostname="$TAILSCALE_HOSTNAME" --ssh
+tailscale up --authkey="$TAILSCALE_AUTH_KEY" --hostname="$TAILSCALE_HOSTNAME"
 
 # ─── UFW: deny everything public, allow SSH only on tailscale0 ────────────────
 
