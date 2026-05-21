@@ -19,6 +19,47 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 **Pre-release.** Active development. Not yet ready for general adoption; first cohort of users coming soon. Watch the repo or open an issue if you'd like a heads-up.
 
+## Services
+
+[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines six long-lived services. All inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+
+| Service | Image | Role |
+| --- | --- | --- |
+| `openclaw-gateway` | `lifekit-openclaw:local` (built from `compose/openclaw-gateway/`) | Runtime gateway — channels, cron, skills, agent. Loopback bind on `127.0.0.1:18789`. |
+| `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. Always-running so it can be `docker exec`'d on demand. |
+| `lifekit-orchestrator` | `lifekit-openclaw:local` | Long-running Python scheduler (`devclaw-orchestrator daemon`) that replaced the OpenClaw cron entries `task_dispatch_15m` and `curator_30m`. Editable-installed from the bind-mounted source on every container start to undo `pip install -e .` hijacks from code-task runners. |
+| `lifekit-curator` | `lifekit-curator:local` (built from `compose/curator/`) | Drains `~/.life/queue.jsonl` and updates domain files via Claude. See [Curator dead-letter behavior](#curator-dead-letter-behavior). |
+| `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
+| `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
+
+### Uniform service policy
+
+Every service merges the `x-policy` anchor at the top of `compose/docker-compose.yml`:
+
+- `init: true`
+- `restart: on-failure:5` — restart loop circuit-breaker; gives up after 5 consecutive failures instead of pinning a CPU forever.
+- `logging.driver: json-file` with `max-size: 50m` and `max-file: 3` — caps each service's on-disk log footprint at ~150MB.
+- `deploy.resources.limits.memory: 1g` — per-service ceiling. Individual services override (gateway 2g, dashboard/openclaw-cli/orchestrator/google-mcp 512m, curator 256m).
+
+Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded log + no memory cap on a runaway agent loop ate the disk and pinned RAM until the host froze. The host also gained a **2 GB `/swapfile`** as a second line of defense; `scripts/bootstrap-vps.sh` provisions it.
+
+### Curator dead-letter behavior
+
+The curator parses every line of `~/.life/queue.jsonl` defensively. Any entry that fails JSON parse, schema validation, or domain dispatch is **quarantined** to `~/.life/queue.dead-letter.jsonl` (overridable via `LIFEKIT_DEAD_LETTER_FILE`) and skipped — a single poison entry will never wedge the curator. Landed in PR #19.
+
+### Dashboard read-only guard
+
+The dashboard's `~/.life` and `~/.openclaw/workspace` bind-mounts are both declared `:ro` in `compose/docker-compose.yml`. The dashboard service itself surfaces this contract by returning **HTTP 503** on any write attempt against the mounted volumes — the UI is observation-only by design, and the filesystem-level read-only mount is the enforcement.
+
+## Monitoring
+
+Per-container resource and process telemetry is collected by **[Netdata](https://www.netdata.cloud/)** installed on the host (not in a container). It is the canonical monitoring layer for this stack.
+
+- **Dashboard:** `http://<tailnet-ip>:19999` — bound to the tailnet interface only, no public ingress.
+- **Alerts:** delivered to Telegram chat `422369750`.
+
+If you want app-level logs, `docker compose logs <service>` is still the path — Netdata only watches the host + container resource envelopes.
+
 ## How it fits together
 
 ```
@@ -86,18 +127,26 @@ Full walkthrough: [`docs/quickstart.md`](./docs/quickstart.md).
 
 ```
 lifekit-stack/
-├── compose/              # docker-compose.extra.yml, Dockerfiles, OpenClaw config template
-├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
+├── compose/              # docker-compose.yml, Dockerfiles, OpenClaw + curator sources
+├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw, redeploy/ (systemd units)
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
-├── docs/                 # quickstart, architecture, runbook, customizing-skills
-├── .github/workflows/    # CI: lint, template tests, semver releases
+├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills
+├── .github/workflows/    # CI: lint, template tests, semver releases — runs on the VPS self-hosted runner
 └── PRIVATE.md            # audit checklist — what NEVER belongs in this repo
 ```
 
-<<<<<<< HEAD
+## VPS users
+
+The reference VPS has two service accounts with different responsibilities — keep them straight when SSH'ing in:
+
+- **`denys`** — the human admin account. Has `NOPASSWD` sudo. Use this for any host-level change (systemd, `apt`, firewall, Netdata config).
+- **`lifekit`** — the deploy + automation account. Owns `/srv/lifekit-stack`, `/srv/life`, `/srv/openclaw/*`, the Claude CLI session under `/home/lifekit/.claude/`, and runs the **GitHub Actions self-hosted runner** that CI jobs in `.github/workflows/` dispatch to. No sudo.
+
+The compose bind-mounts (Claude session, `gh` config, `.gitconfig`) all resolve to `/home/lifekit/...` for this reason.
+
 ## Dashboard access
 
-The optional `lifekit-dashboard` service ships a read-only web UI surfacing state from `~/.life/` and `~/.openclaw/workspace/` (crons, tasks, proposals, PRs, gaps, recent runs). It is built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard) — `scripts/deploy.sh` handles the clone/pull, so `gh auth login` must already be set up on the host as the `lifekit` user.
+The `lifekit-dashboard` service ships a read-only web UI surfacing state from `~/.life/` and `~/.openclaw/workspace/` (crons, tasks, proposals, PRs, gaps, recent runs). It is built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard) — `scripts/deploy.sh` handles the clone/pull, so `gh auth login` must already be set up on the host as the `lifekit` user.
 
 The container binds to `127.0.0.1:${LIFEKIT_DASHBOARD_PORT:-18790}` only — no public ingress. External access goes through Tailscale serve. After `deploy.sh` succeeds, run once on the VPS:
 
@@ -106,7 +155,7 @@ sudo tailscale serve --bg --https=443 / http://127.0.0.1:18790
 ```
 
 The dashboard is then reachable at `https://<hostname>.<tailnet>.ts.net/` from any device on your tailnet. `tailscale serve status` lists the resulting URL.
-=======
+
 ## Auto-redeploy
 
 The `lifekit-dashboard` container auto-redeploys every 5 minutes from upstream `main` via a systemd timer (`lifekit-dashboard-redeploy.timer`). The timer is installed by `scripts/bootstrap-vps.sh`; the underlying script (`scripts/redeploy/lifekit-dashboard-redeploy.sh`) checks `dsdevq/lifekit-dashboard`'s `origin/main` against the local checkout and only rebuilds when there's a new commit (silent on no-op).
@@ -115,7 +164,6 @@ The `lifekit-dashboard` container auto-redeploys every 5 minutes from upstream `
 - **View recent runs:** `journalctl -u lifekit-dashboard-redeploy.service -n 50`
 
 This is currently scoped to `lifekit-dashboard` only. A generic, config-driven multi-repo version will land when a second repo needs the same treatment.
->>>>>>> 62e15f8 (Add pull-based auto-redeploy systemd timer for lifekit-dashboard)
 
 ## Updating
 
@@ -168,6 +216,7 @@ The exact combination this stack is tested against. Every component below is a s
 - **Host:** [Hetzner](https://www.hetzner.com/cloud) CX22 (2 vCPU / 4GB RAM, ≈€4/mo, EU), Ubuntu 24.04. Any other Debian-family VPS with comparable specs should work; the only setup that gets active issue-tracking is this one.
 - **Mesh VPN:** [Tailscale](https://tailscale.com/) with an [unattended-join auth key](https://login.tailscale.com/admin/settings/keys). The host's UFW closes all public ports except ICMP; admin access (SSH, SSHFS) goes through the mesh.
 - **Chat transport:** Telegram long-polling — the gateway dials out to Telegram, no inbound webhook needed. Create a bot via [@BotFather](https://t.me/BotFather) (grab the token), then DM [@userinfobot](https://t.me/userinfobot) to get your own numeric user ID (this becomes the owner allowlist).
+- **Monitoring:** [Netdata](https://www.netdata.cloud/) on the host (not containerized). Tailnet-only dashboard at `http://<tailnet-ip>:19999`; alerts to Telegram chat `422369750`.
 - **Local LLM:** Anthropic Haiku on the same VPS (CPU-only, no GPU required).
 
 Swap any of these by writing a new adapter against the corresponding port — the rest of the stack doesn't know or care.
