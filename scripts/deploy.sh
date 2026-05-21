@@ -247,11 +247,11 @@ say "Waiting 10s for services to settle"
 sleep 10
 
 say "openclaw doctor"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T openclaw-cli \
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
   node dist/index.js doctor || echo "(doctor reported issues — review above)"
 
 say "openclaw health"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T openclaw-cli \
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
   node dist/index.js health || echo "(health reported issues — review above)"
 
 say "container status"
