@@ -168,6 +168,10 @@ services:
     # spawning a Claude subagent per tick. Image is reused from openclaw
     # because the orchestrator's cognition nodes shell out to `claude --print`.
     image: lifekit-openclaw:local
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     depends_on:
       - openclaw-gateway
     environment:
