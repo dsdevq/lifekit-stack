@@ -17,6 +17,7 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/srv/lifekit-stack}"
 ENV_FILE="${ENV_FILE:-/srv/openclaw/config/.env}"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
 COMPOSE_FILE="${REPO_DIR}/compose/docker-compose.yml"
 
 say() { printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
@@ -35,6 +36,37 @@ fi
 
 say "git pull"
 git pull --ff-only
+
+# ─── OpenClaw onboard (first deploy only) ────────────────────────────────────
+#
+# A fresh host has no /srv/openclaw/config/openclaw.json — without it the
+# gateway can't start. `openclaw onboard` materializes it from the .env using
+# the same non-interactive flags that produced a working config on cax11.
+# Skipped on every subsequent deploy because the file persists in the
+# host-mounted config dir (idempotent).
+#
+# Why openclaw-gateway and not openclaw-cli: openclaw-cli has
+# `network_mode: service:openclaw-gateway`, so running it on a fresh host
+# would start (and crash) the gateway as a dependency — the gateway needs the
+# very openclaw.json this step generates. openclaw-gateway has the same image
+# and the same config-dir bind-mount, no inter-service network dep, and with
+# `--no-deps --entrypoint openclaw` we get a one-shot CLI invocation that
+# only writes the config file and exits.
+if [[ ! -f "${OPENCLAW_CONFIG_DIR}/openclaw.json" ]]; then
+  say "openclaw onboard (generating ${OPENCLAW_CONFIG_DIR}/openclaw.json)"
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+    run --rm --no-deps --entrypoint openclaw openclaw-gateway \
+      onboard \
+        --non-interactive \
+        --accept-risk \
+        --flow quickstart \
+        --mode local \
+        --auth-choice skip \
+        --gateway-auth token \
+        --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
+        --gateway-bind loopback \
+        --gateway-port 18789
+fi
 
 # ─── lifekit-dashboard: VPS-local clone ──────────────────────────────────────
 #
