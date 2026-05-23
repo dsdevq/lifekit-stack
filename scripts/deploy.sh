@@ -82,6 +82,13 @@ else
   git -C "${DASHBOARD_DIR}" pull --ff-only
 fi
 
+# ─── modules.yaml → /srv/life/system/ ───────────────────────────────────────
+
+LIFE_DIR="${LIFEKIT_LIFE_DIR:-/srv/life}"
+say "syncing config/modules.yaml → ${LIFE_DIR}/system/modules.yaml"
+mkdir -p "${LIFE_DIR}/system"
+cp "${REPO_DIR}/defaults/modules.yaml" "${LIFE_DIR}/system/modules.yaml"
+
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 say "docker compose up -d --build"

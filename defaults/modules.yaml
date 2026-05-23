@@ -1,0 +1,55 @@
+# modules.yaml — lifekit-stack routing manifest
+#
+# Describes each capability module wired in this stack.
+# OpenClaw reads this (via lifekit-router skill) to route user intents
+# to the right MCP server.
+#
+# Deploy: scripts/deploy.sh copies this to /srv/life/system/modules.yaml
+# on the VPS so it lands in the ~/.life/ knowledge layer where OpenClaw
+# can read it.
+#
+# Schema:
+#   id          — matches the MCP server id in openclaw.json
+#   description — what this module can do (used for routing decisions)
+#   mcp         — internal MCP server URL (compose DNS)
+#   examples    — sample intents that should route here
+
+modules:
+  - id: devclaw
+    description: Implement features, fix bugs, open PRs, research technical topics, check and manage dev task status
+    mcp: http://devclaw-mcp:8000/mcp/
+    examples:
+      - "implement dark mode in lifekit-dashboard"
+      - "fix the bug where curator crashes on empty queue"
+      - "research how LangGraph handles checkpointing"
+      - "what's the status of my last dev task"
+      - "the task is blocked, help me fix it"
+
+  - id: google-workspace
+    description: Send and read emails, manage calendar events, create and edit Google Docs, Sheets, Drive files, manage tasks
+    mcp: http://google-workspace-mcp:8000/mcp/
+    examples:
+      - "send an email to John about the meeting"
+      - "what's on my calendar tomorrow"
+      - "book a dentist appointment"
+      - "create a Google Doc with my weekly plan"
+      - "add a task to my Google Tasks"
+
+  # ── future modules ────────────────────────────────────────────────────────
+  # Add entries here as you wire new modules into the stack.
+
+  # - id: health-claw
+  #   description: Log workouts, track nutrition, manage supplements, monitor sleep and recovery
+  #   mcp: http://health-claw:8000/mcp/
+  #   examples:
+  #     - "log today's workout"
+  #     - "what did I eat yesterday"
+  #     - "am I hitting my protein target this week"
+
+  # - id: finance-claw
+  #   description: Track spending, review transactions, help with tax prep, monitor financial goals
+  #   mcp: http://finance-claw:8000/mcp/
+  #   examples:
+  #     - "how much did I spend on food this month"
+  #     - "what are my recurring subscriptions"
+  #     - "help me prepare for tax season"

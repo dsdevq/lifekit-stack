@@ -1,6 +1,18 @@
 # skills/
 
-This directory is **intentionally empty** in v0.x.
+Two kinds of skills live here:
+
+**System skills** (committed to this repo) — wiring skills that are part of the stack itself, not personal content. They encode how OpenClaw interacts with the deployed modules.
+
+**Personal skills** (not committed) — your personal vocabulary, routines, and preferences. These stay on disk and get rsynced to the VPS at deploy time.
+
+## System skills
+
+| Skill | Purpose |
+|---|---|
+| `lifekit-router` | Route every user intent to the right capability module using `~/.life/system/modules.yaml` |
+
+## Personal skills (v0.x)
 
 ## Why
 

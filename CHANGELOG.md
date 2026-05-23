@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- `config/modules.yaml` — routing manifest describing each wired capability module (id, description, MCP URL, example intents). Copied to `/srv/life/system/modules.yaml` on every deploy so OpenClaw can read it for routing decisions.
+- `skills/lifekit-router/SKILL.md` — system skill that tells OpenClaw to read `modules.yaml` at session start and route intents to the right module.
 - `compose/devclaw-mcp/` — new `devclaw-mcp` service exposing the devclaw orchestrator as a streamable-http MCP server on :8000. Register via `compose/devclaw-mcp/mcp-config.json` in `openclaw.json` to give openclaw-gateway full conversational access to devclaw tasks.
 
 ### Changed
