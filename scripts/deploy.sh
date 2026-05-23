@@ -123,21 +123,23 @@ fi
 
 # ─── Skill CLI install (life-state etc.) ─────────────────────────────────────
 #
-# Some skills shell out to a CLI binary that is NOT shipped from this repo
-# (e.g. life-state is published from a separate ~/projects/life-state repo
-# on the maintainer's laptop, then `npm install -g`'d on the VPS). The
-# 2026-05-16 PC→VPS migration copied the skill prompts but not these external
-# CLIs, leaving the gateway with "command not found" errors at runtime.
+# Some module CLIs are NOT shipped from this repo — they live in separate
+# repos (workout-claw, life-state, health-claw) on the maintainer's laptop
+# and are rsync'd to /srv/openclaw/workspace/external/ on the VPS. The
+# health-claw container installs them at start from those paths.
 #
-# Until those CLIs are vendored into this repo (or published to npm under
-# a stable name), the install is a manual one-shot performed by Denys after
-# rsync. See proposals/2026-05-19-vps-skill-wrappers.md for the recovery
-# checklist. The block below is a no-op placeholder so the contract is
-# documented in code, not just in proposals.
+# Before running this deploy script after adding the health-claw service,
+# rsync the external sources to the VPS:
 #
-# Example (manual, run on the VPS after this script finishes):
-#   docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env \
-#     exec openclaw-gateway npm install -g /home/node/.openclaw/workspace/external/life-state
+#   rsync -a ~/projects/workout-claw/ lifekit@lifekit-vps:/srv/openclaw/workspace/external/workout-claw/
+#   rsync -a ~/projects/life-state/   lifekit@lifekit-vps:/srv/openclaw/workspace/external/life-state/
+#   rsync -a ~/projects/health-claw/  lifekit@lifekit-vps:/srv/openclaw/workspace/external/health-claw/
+#
+# Also create the workout-claw data dir if it doesn't exist:
+#   ssh lifekit@lifekit-vps mkdir -p /srv/workout-claw
+#
+# And register the health-claw MCP in openclaw.json:
+#   (add the entry from compose/health-claw/mcp-config.json to /srv/openclaw/config/openclaw.json)
 
 # ─── Health checks ───────────────────────────────────────────────────────────
 

@@ -1,0 +1,5 @@
+{
+  "id": "health-claw",
+  "transport": "streamable-http",
+  "url": "http://health-claw:8000/mcp/"
+}

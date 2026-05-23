@@ -35,16 +35,20 @@ modules:
       - "create a Google Doc with my weekly plan"
       - "add a task to my Google Tasks"
 
+  - id: health-claw
+    description: Log workouts, track PRs and volume per muscle group, record daily mood/energy/soreness/sleep, get state-aware fitness suggestions
+    mcp: http://health-claw:8000/mcp/
+    examples:
+      - "log today's workout: bench 4x10 at 60, pullups 4x10"
+      - "what's my squat PR"
+      - "how much back volume did I do this week"
+      - "feeling tired, energy 5, sore chest"
+      - "morning check-in: slept well, energy 7"
+      - "what was my last workout"
+      - "show my chest history from the last month"
+
   # ── future modules ────────────────────────────────────────────────────────
   # Add entries here as you wire new modules into the stack.
-
-  # - id: health-claw
-  #   description: Log workouts, track nutrition, manage supplements, monitor sleep and recovery
-  #   mcp: http://health-claw:8000/mcp/
-  #   examples:
-  #     - "log today's workout"
-  #     - "what did I eat yesterday"
-  #     - "am I hitting my protein target this week"
 
   # - id: finance-claw
   #   description: Track spending, review transactions, help with tax prep, monitor financial goals
