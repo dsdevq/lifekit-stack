@@ -1,12 +1,13 @@
 # lifekit-stack compose file.
 #
-# Defines six services:
+# Defines seven services:
 #   openclaw-gateway     — the runtime gateway (channels, cron, skills, agent); loopback bind on 18789
 #   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations
 #   lifekit-orchestrator — long-running Python scheduler (sweep + supervise) replacing the OpenClaw cron entries
 #   lifekit-curator      — queue-drain memory maintainer; defensive parsing with dead-letter quarantine
 #   lifekit-dashboard    — read-only web UI over ~/.life and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
+#   devclaw-mcp          — MCP bridge between openclaw-gateway and the devclaw orchestrator; internal-only on :8000
 #
 # Run from the repo root after `scripts/bootstrap-vps.sh` has set up the host:
 #   cd /srv/lifekit-stack && ./scripts/deploy.sh
@@ -319,6 +320,64 @@ services:
       - NET_ADMIN
     security_opt:
       - no-new-privileges:true
+
+  devclaw-mcp:
+    <<: *policy
+    # MCP bridge: openclaw-gateway calls tools here; this container runs
+    # devclaw-orchestrator subcommands locally (DEVCLAW_LOCAL=1) against the
+    # shared /srv/life bind-mount. Internal-only — no host port binding.
+    # Register in openclaw.json via compose/devclaw-mcp/mcp-config.json.
+    image: lifekit-openclaw:local
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    depends_on:
+      - openclaw-gateway
+    environment:
+      DEVCLAW_LOCAL: "1"
+      DEVCLAW_LIFE_DIR: /srv/life
+      DEVCLAW_MCP_LOG_LEVEL: ${DEVCLAW_MCP_LOG_LEVEL:-INFO}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
+      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/srv/life
+      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
+      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "8000"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        export PATH="/home/node/.orchestrator-venv/bin:$$PATH"
+        if [ ! -x /home/node/.orchestrator-venv/bin/pip ]; then
+          python3 -m venv /home/node/.orchestrator-venv
+          /home/node/.orchestrator-venv/bin/pip install --upgrade pip --quiet
+        fi
+        /home/node/.orchestrator-venv/bin/pip install -e /home/node/.openclaw/workspace/devclaw/orchestrator --quiet
+        exec "$$@"
+      - --
+    command:
+      - devclaw-mcp
+      - --transport
+      - http
+      - --port
+      - "8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "curl -fs http://127.0.0.1:8000/health || exit 1"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   google-workspace-mcp:
     <<: *policy

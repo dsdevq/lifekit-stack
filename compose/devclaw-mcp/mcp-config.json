@@ -1,0 +1,6 @@
+{
+  "_comment": "Merge this object into the `mcp.servers` array of /srv/openclaw/config/openclaw.json on the VPS so openclaw-gateway connects to the devclaw-mcp sibling container on startup. See docs/devclaw-mcp.md for the full setup.",
+  "id": "devclaw",
+  "transport": "streamable-http",
+  "url": "http://devclaw-mcp:8000/mcp/"
+}
