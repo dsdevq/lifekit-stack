@@ -304,8 +304,7 @@ services:
         limits:
           memory: 256m
     environment:
-      LIFEKIT_LIFE_DIR: /srv/life
-      LIFEKIT_QUEUE_FILE: /srv/life/queue.jsonl
+      LIFEKIT_ROOT: /srv/life
       LIFEKIT_WAKE_INTERVAL_SECONDS: ${LIFEKIT_WAKE_INTERVAL_SECONDS:-900}
       LIFEKIT_LOG_LEVEL: ${LIFEKIT_LOG_LEVEL:-INFO}
       TZ: ${OPENCLAW_TZ:-UTC}
