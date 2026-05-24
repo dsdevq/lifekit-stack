@@ -1,222 +1,239 @@
 # OpenClaw Agent Design
 
-How lifekit-stack uses OpenClaw — concepts, primitives, and why the architecture is designed the way it is.
+How lifekit-stack uses OpenClaw — the philosophy, the primitives, and why the architecture is designed the way it is.
 
 ---
 
-## The pattern: modular monolith
+## Philosophy: modular monolith
 
 lifekit-stack is a **modular monolith**:
 
 - **Single deployable unit** — one OpenClaw gateway, one `openclaw.json`, one Docker Compose stack
-- **Internally modular** — each domain (health, dev, workspace) is a self-contained MCP server with its own tools and data
-- **Clear boundaries** — modules don't share memory or bleed into each other, but they all live in the same runtime
-- **Single brain** — one OpenClaw agent orchestrates everything via skills and MCP tool calls
+- **Internally modular** — each domain (health, finance, dev, ...) is a self-contained module: its own agent, skills, hooks, plugins, and isolated memory
+- **Clear boundaries** — modules don't share memory or state, but they all live in the same runtime
+- **One orchestrator** — a top-level agent receives every user message, decides which domain agents to invoke, and merges their responses
 
-The alternative would be a microservices approach — a separate OpenClaw gateway per domain, network calls between them. That's operational overkill for a personal assistant.
+This is not microservices. There is no inter-service networking, no message queues, no separate gateways per domain. The isolation is logical, not physical.
 
 ---
 
-## OpenClaw concepts used in this stack
+## OpenClaw primitives and how they map here
 
-### Agents
+### Agents — the unit of domain isolation
 
 An agent in OpenClaw is "a fully scoped brain with its own workspace, state directory, session store, auth profiles, and model registry."
 
-In lifekit-stack there is **one agent** — the main gateway agent. It receives every user message, loads relevant context from `~/.life/`, and routes work to the appropriate module via the `lifekit-router` skill.
+**This is the primary isolation primitive.** Each domain in lifekit-stack is a separate OpenClaw agent:
+
+```
+openclaw.json
+├── agents
+│   ├── orchestrator      ← receives every user message, decides routing
+│   ├── health            ← health, fitness, mood, sleep
+│   ├── finance           ← spending, budgets, investments
+│   ├── dev               ← code, PRs, technical research
+│   └── ...
+```
+
+Each domain agent has its own workspace:
+
+```
+~/.openclaw/agents/<domain>/workspace/
+├── AGENTS.md       # domain-specific operating instructions
+├── SOUL.md         # persona for this domain
+├── USER.md         # relevant user profile for this domain
+├── MEMORY.md       # long-term domain facts
+├── memory/
+│   └── YYYY-MM-DD.md   # daily working notes
+└── skills/         # domain-specific skill overrides
+```
+
+Memory is **fully isolated** — health agent never sees finance memory, and vice versa.
 
 Reference: [https://docs.openclaw.ai/concepts/agents](https://docs.openclaw.ai/concepts/agents)
 
-Multiple OpenClaw agents (via `agentToAgent`) are not used here by design — they add routing complexity and session overhead without a meaningful gain for a single-user personal assistant. One brain, well-instructed via `AGENTS.md`, is simpler and more predictable.
+### Skills — instructional, not architectural
 
-### Skills
+Skills are `SKILL.md` files that teach an agent how to use its tools in a specific context. They are loaded on-demand, keeping context lean.
 
-Skills in OpenClaw are **instructional** — a `SKILL.md` file that teaches the agent how to use available tools in a specific context. They are not architectural isolators.
+Each domain module can have its own skills. A skill is domain-specific knowledge: how to log a workout, how to analyze spending, how to file a dev task.
 
-`lifekit-router` is the core skill in this stack. It:
-1. Reads `~/.life/system/modules.yaml` to know what modules exist and what they do
-2. Matches the user's intent against module descriptions and examples
-3. Calls the right MCP server's tools
-4. Translates the result back to the user
-
-Skills are loaded on-demand (not auto-injected into every session), which keeps context lean.
+Skills are **not** the routing layer — that belongs in the orchestrator's `AGENTS.md`.
 
 Reference: [https://docs.openclaw.ai/concepts/skills](https://docs.openclaw.ai/concepts/skills)
 
-### Memory
+### Memory — per-domain, per-agent
 
-Each agent has its own isolated memory at `~/.openclaw/agents/<agentId>/workspace/`:
+Two memory layers exist side by side:
 
-```
-workspace/
-├── AGENTS.md       # standing operating instructions — loaded every session
-├── SOUL.md         # persona and tone
-├── USER.md         # who the user is
-├── MEMORY.md       # long-term facts loaded at session start
-└── memory/
-    ├── 2026-05-24.md   # today's working notes (auto-loaded)
-    └── 2026-05-23.md   # yesterday's (auto-loaded)
-```
+| Layer | Location | Owner | Purpose |
+|---|---|---|---|
+| OpenClaw workspace memory | `~/.openclaw/agents/<id>/workspace/MEMORY.md` | Each agent | Long-term facts, preferences, decisions for that domain |
+| lifekit domain files | `~/.life/domains/<domain>.md` | lifekit-curator | Curated knowledge extracted from conversations |
 
-`~/.life/domains/` is a **separate, parallel memory layer** owned by the lifekit framework — not OpenClaw's native memory. The router skill bridges these two layers: it reads `~/.life/domains/` to inject domain-specific context into MCP calls.
+Domain agents read from both. The curator writes to `~/.life/domains/` independently of OpenClaw's session lifecycle.
 
 Reference: [https://docs.openclaw.ai/concepts/memory](https://docs.openclaw.ai/concepts/memory)
 
-### Tools and MCP servers
+### agentToAgent — the routing primitive
 
-Tools are callable functions the agent can invoke. Each domain module in this stack is an **MCP server** that exposes tools:
+OpenClaw's `agentToAgent` tool allows one agent to dispatch a task to another agent and receive its response. This is how the orchestrator invokes domain agents:
 
-| Module | MCP server | What it does |
-|---|---|---|
-| `health-claw` | `http://health-claw:8000/mcp/` | Workouts, PRs, mood/energy logging, fitness state |
-| `devclaw` | `http://devclaw-mcp:8000/mcp/` | Dev tasks, PRs, technical research |
-| `google-workspace` | `http://google-workspace-mcp:8000/mcp/` | Email, calendar, docs, tasks |
+```
+User message
+  → orchestrator agent
+    → reads AGENTS.md (routing instructions)
+    → decides: health + finance relevant
+    → agentToAgent(agent: "health", task: "...")
+    → agentToAgent(agent: "finance", task: "...")
+    → merges both responses
+  → single reply to user
+```
 
-New modules are added by:
-1. Adding the MCP server to `compose/docker-compose.yml`
-2. Wiring it into `openclaw.json` under `mcp.servers`
-3. Adding an entry to `defaults/modules.yaml`
-
-The router skill picks up new modules automatically — no code changes needed.
-
-Reference: [https://docs.openclaw.ai/concepts/tools](https://docs.openclaw.ai/concepts/tools)
-
-### Bindings
-
-Bindings route inbound messages to agents. In this stack there is one binding: the Telegram channel routes to the single main agent.
+`agentToAgent` must be explicitly enabled and allowlisted in `openclaw.json`:
 
 ```json5
-bindings: [
-  { peer: "{{ telegram_chat_id }}", agent: "main" }
-]
+tools: {
+  agentToAgent: {
+    enabled: true,
+    allow: ["health", "finance", "dev"]
+  }
+}
 ```
 
 Reference: [https://docs.openclaw.ai/concepts/multi-agent](https://docs.openclaw.ai/concepts/multi-agent)
 
-### Cron and heartbeat
+### Bindings — single entry point
 
-OpenClaw's native cron runs scheduled tasks against the agent. Used in this stack for the curator drain trigger and morning brief.
+Bindings route inbound channel messages to agents. All user messages enter through **one binding** pointing to the orchestrator:
 
-Heartbeat runs a lightweight periodic turn in the main session (default every 30 min) — used for ambient monitoring and inferred commitment follow-ups.
+```json5
+bindings: [
+  { peer: "{{ telegram_chat_id }}", agent: "orchestrator" }
+]
+```
 
-Reference: [https://docs.openclaw.ai/concepts/cron](https://docs.openclaw.ai/concepts/cron)
+Domain agents are never bound to channels directly — they only receive tasks from the orchestrator via `agentToAgent`.
+
+### Hooks and plugins
+
+OpenClaw provides hooks for intercepting the agent lifecycle (`before_prompt_build`, `before_tool_call`, `subagent_spawning`, etc.). These are the extension points for cross-cutting concerns: logging, cost tracking, rate limiting, routing overrides.
+
+Plugins extend the gateway with new channels, model providers, tools, or skills. Domain-specific plugins live close to their domain module.
+
+Reference: [https://docs.openclaw.ai/concepts/plugins](https://docs.openclaw.ai/concepts/plugins)
 
 ---
 
-## Routing: how the agent decides what to call
+## Routing: how the orchestrator decides
 
-The routing model is **skill-driven, not code-driven**:
+The orchestrator's routing logic lives in `AGENTS.md` — not in code. Claude's tool selection handles the dispatch:
 
-```
-User message
-  → OpenClaw agent (AGENTS.md loaded)
-    → lifekit-router skill activated
-      → reads ~/.life/system/modules.yaml
-      → reads relevant ~/.life/domains/*.md for context
-      → matches intent → picks module(s)
-      → calls MCP tools
-      → synthesizes response
-  → Reply to user
-```
+1. `AGENTS.md` lists each domain agent with a short description of what it covers
+2. The orchestrator reads the user message, matches it against domain descriptions
+3. Calls `agentToAgent` for each relevant domain (sequential within one turn)
+4. Synthesizes all responses into one reply
 
-For cross-module intents ("book a dentist and block the time in my calendar"), the router handles them **sequentially within one agent turn** — completes the first MCP call, uses its result to inform the second. This is explicit in `skills/lifekit-router/SKILL.md`.
+For cross-domain queries ("what should I eat to stay within my budget this week"), both health and finance agents are called. The orchestrator is responsible for merging their answers coherently.
 
-This is intentional. Parallel fan-out adds complexity and makes response synthesis harder. Sequential calls in a single turn are coherent, auditable, and fast enough for a personal assistant.
+This keeps routing **declarative and auditable** — change `AGENTS.md`, change routing behavior, no code deploy.
 
 ---
 
 ## AGENTS.md — the orchestrator's standing instructions
 
-`AGENTS.md` is the most important file in the workspace. It is loaded into every session and defines how the agent operates. It should be written like a contract, not a prompt.
+`AGENTS.md` is loaded into every orchestrator session. It is the contract for how the agent operates.
 
-### What belongs in AGENTS.md
+### What belongs here
 
-- **Who this agent is and what it owns** — the scope of its authority
-- **How it routes work** — explicit instruction to use the router skill and call modules
-- **What it never does** — guard rails (never fulfills a request a module covers; never dumps raw JSON)
-- **How it communicates** — tone, format, length
+- Who this agent is and the scope of its authority
+- The list of domain agents and what each covers (the routing table)
+- How to handle cross-domain queries (call all relevant, merge)
+- What the orchestrator never does itself (domain work belongs to domain agents)
+- Communication style
 
-### What does NOT belong in AGENTS.md
+### What does NOT belong here
 
-- Domain knowledge (that's in `~/.life/domains/`)
-- Module descriptions (that's in `modules.yaml`)
-- User preferences (that's in `USER.md`)
-- Persona and tone detail (that's in `SOUL.md`)
+- Domain knowledge → lives in domain agent's `AGENTS.md` and `~/.life/domains/`
+- User preferences → `USER.md`
+- Persona detail → `SOUL.md`
+- Tool usage instructions → `TOOLS.md` or skills
 
-### Example AGENTS.md
+### Example orchestrator AGENTS.md
 
 ```markdown
 # Kit
 
-You are Kit — Denys's personal AI assistant running on his VPS.
-
-You are the single point of contact for everything: productivity, health, dev work,
-communication, finance. You route work to specialist modules and synthesize their
-results. You do not do the specialist work yourself.
+You are Kit — Denys's personal AI assistant. You are the single entry point for
+everything. You route work to specialist domain agents and synthesize their results.
+You do not do the specialist work yourself.
 
 ---
 
-## How you work
+## Domain agents
 
-At the start of every session, the lifekit-router skill is active. Use it.
+Invoke the right agent(s) using the agentToAgent tool. Match the user's intent
+against these descriptions:
 
-For every user message:
-1. Read ~/.life/system/modules.yaml to know what modules are available.
-2. Read the relevant domain file(s) from ~/.life/domains/ for context.
-3. Match the intent to the right module(s). Call their MCP tools.
-4. Synthesize the result into one clear, plain-language response.
-5. If no module covers the intent, handle it directly using your knowledge and ~/.life/ context.
+- **health** — fitness, workouts, nutrition, sleep, mood, energy, body metrics
+- **finance** — spending, budgets, investments, subscriptions, tax, financial goals
+- **dev** — code, PRs, bugs, technical research, dev task management
+- **workspace** — email, calendar, documents, tasks, scheduling
 
-For cross-module intents, handle sequentially: finish the first module call, use its
-result to inform the second.
+---
+
+## Routing rules
+
+1. Identify all domains relevant to the user's message.
+2. Call each relevant domain agent via agentToAgent. Pass the user's message and
+   any context from ~/.life/domains/ that the domain agent would need.
+3. For cross-domain queries, call all relevant agents and merge their responses
+   into one coherent reply.
+4. If no domain covers the intent, handle it directly.
 
 ---
 
 ## What you never do
 
-- Never attempt to fulfill a request that a module covers — always call the module.
-- Never dump raw JSON or tool output at the user.
+- Never do domain-specific work yourself — always delegate to the domain agent.
+- Never dump raw agent output at the user — always synthesize.
+- Never act on sensitive operations (sending email, making purchases, filing tasks)
+  without confirming intent first.
 - Never ask more than one clarifying question at a time.
-- Never make assumptions about sensitive actions (sending emails, booking appointments,
-  filing tasks) — confirm intent first, then act.
 
 ---
 
-## How you communicate
+## Communication
 
-- Confirm what you're doing in one line before calling a module: "Logging this workout with health-claw."
-- After a module responds, summarize in plain language. Be concise.
-- Match Denys's register — direct, no filler, no corporate tone.
-- If something is blocked or failed, explain clearly and suggest next steps.
+- Confirm routing in one line before calling: "Checking this with health and finance."
+- After agents respond, synthesize into plain language. Be concise.
+- Match Denys's register: direct, no filler.
+- If a domain agent fails or is blocked, explain clearly and suggest next steps.
 
 ---
 
 ## Memory
 
-Save to MEMORY.md when you learn something durable about Denys's preferences,
-constraints, or goals that isn't already in ~/.life/domains/. Do not duplicate
-what's already in the domain files.
-
-Use today's daily note (memory/YYYY-MM-DD.md) for working context — things that
-matter this session or this week but not permanently.
+Save to MEMORY.md only what is durable and not already in ~/.life/domains/. Use
+today's daily note for working context within this session or week.
 ```
 
 ---
 
-## Adding a new module
+## Adding a new domain module
 
-1. Build the MCP server (see existing modules in `compose/` for the pattern)
-2. Add the service to `compose/docker-compose.yml`
-3. Wire it in `openclaw.json` under `mcp.servers`
-4. Add an entry to `defaults/modules.yaml` with `id`, `description`, `mcp`, and `examples`
-5. The router skill picks it up on next session — no other changes needed
+1. Add the agent config to `openclaw.json` under `agents.<id>`
+2. Create the workspace at `~/.openclaw/agents/<id>/workspace/` with `AGENTS.md`, `SOUL.md`, `USER.md`
+3. Add any domain-specific skills to the workspace's `skills/` directory
+4. Add the agent to the orchestrator's `AGENTS.md` routing table
+5. Add it to `agentToAgent.allow` in `openclaw.json`
+
+No code changes. Routing picks it up from `AGENTS.md` on next session.
 
 ---
 
 ## Further reading
 
 - [OpenClaw concepts](https://docs.openclaw.ai/) — agents, skills, memory, tools, bindings, cron
-- [OpenClaw multi-agent](https://docs.openclaw.ai/concepts/multi-agent) — why we use one agent, not many
-- [lifekit-router skill](../skills/lifekit-router/SKILL.md) — the routing logic
-- [modules.yaml](../defaults/modules.yaml) — the routing manifest
+- [OpenClaw multi-agent](https://docs.openclaw.ai/concepts/multi-agent) — agentToAgent, bindings, workspace isolation
 - [architecture.md](./architecture.md) — the stack-level design
