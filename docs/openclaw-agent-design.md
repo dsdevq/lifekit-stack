@@ -232,8 +232,61 @@ No code changes. Routing picks it up from `AGENTS.md` on next session.
 
 ---
 
+## DevClaw — the dev domain module
+
+The dev domain is special: it's not just an OpenClaw agent, it's a fully separate service.
+
+**DevClaw** (`dsdevq/devclaw`) is an autonomous software development runtime. From OpenClaw's perspective it looks like any other MCP server — the orchestrator calls it via tools:
+
+```
+implement_feature(project_id, goal, notify_url)
+fix_bug(project_id, description, notify_url)
+get_status(task_id)
+list_tasks(project_id?)
+```
+
+Internally DevClaw orchestrates [OpenHands](https://github.com/All-Hands-AI/OpenHands) — an autonomous coding agent that runs in an isolated Docker sandbox, writes code, runs tests, and opens PRs. OpenClaw never knows OpenHands exists.
+
+### How they connect
+
+```
+You (Telegram)
+  │
+  ▼
+OpenClaw orchestrator
+  └── agentToAgent → dev agent
+                       └── MCP call → DevClaw
+                                        ├── planner (Goal → Tasks)
+                                        ├── state store
+                                        ├── poller
+                                        └── REST → OpenHands (Docker)
+                                                      └── sandbox + agent loop
+```
+
+### Callback flow
+
+OpenClaw passes a `notify_url` when it kicks off a task. DevClaw calls it when done or blocked. OpenClaw forwards to Telegram.
+
+```
+Dev agent calls:    implement_feature(goal, notify_url="openclaw.internal/notify/xyz")
+DevClaw executes:   OpenHands runs autonomously
+DevClaw calls back: POST notify_url → {status: "done", pr_url: "..."}
+OpenClaw delivers:  → Telegram message to you
+```
+
+Neither system is coupled to the other's internals. DevClaw is a black box from OpenClaw's perspective.
+
+### Why DevClaw is a separate service, not an OpenClaw agent
+
+OpenClaw agents are conversational and session-based — a session starts with a message, ends with a response. DevClaw's execution model is different: a goal can run for hours across multiple OpenHands sessions, survive container restarts, and report back asynchronously. That lifecycle doesn't fit inside an OpenClaw agent session.
+
+See [DevClaw architecture](https://github.com/dsdevq/devclaw/blob/main/docs/architecture-v2.md) for the full design.
+
+---
+
 ## Further reading
 
 - [OpenClaw concepts](https://docs.openclaw.ai/) — agents, skills, memory, tools, bindings, cron
 - [OpenClaw multi-agent](https://docs.openclaw.ai/concepts/multi-agent) — agentToAgent, bindings, workspace isolation
+- [DevClaw architecture](https://github.com/dsdevq/devclaw/blob/main/docs/architecture-v2.md) — how DevClaw + OpenHands work as the dev execution engine
 - [architecture.md](./architecture.md) — the stack-level design
