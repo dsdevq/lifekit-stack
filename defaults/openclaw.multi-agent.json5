@@ -60,6 +60,19 @@
         // google-workspace MCP. Reasoning load is light.
         model: "anthropic/claude-haiku-4-5",
       },
+
+      {
+        id: "health",
+        name: "Health",
+        workspace: "/home/node/.openclaw/agents/health/workspace",
+        agentDir: "/home/node/.openclaw/agents/health/agent",
+
+        // Sonnet: state-aware fitness suggestions need real reasoning
+        // (cross-reference today's state with workout history, infer
+        // muscle groups from natural-language descriptions). Haiku would
+        // miss the inference.
+        model: "anthropic/claude-sonnet-4-6",
+      },
     ],
   },
 
