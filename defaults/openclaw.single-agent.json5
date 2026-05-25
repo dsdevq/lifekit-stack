@@ -61,26 +61,26 @@
     { agentId: "kit", match: { channel: "telegram", accountId: "*" } }
   ],
 
-  // MCP servers Kit can call as tools.
+  // MCP servers Kit can call as tools. The schema is an OBJECT keyed by
+  // server id (NOT an array — caught at runtime 2026-05-25 during the
+  // first Kit ↔ DevClaw v2 integration test).
   mcp: {
-    servers: [
+    servers: {
       // google-workspace — Gmail/Calendar/Docs/Sheets/Drive/Tasks.
       // Pre-existing third-party MCP server — qualifies per the boundary rule.
-      {
-        id: "google-workspace",
+      "google-workspace": {
         transport: "streamable-http",
         url: "http://google-workspace-mcp:8000/mcp/"
-      }
+      },
 
-      // devclaw — async autonomous dev work via OpenHands. Uncomment when
-      // DevClaw v2 MCP server lands (currently greenfield on
-      // dsdevq/devclaw feat/architecture-v2-openhands).
-      // {
-      //   id: "devclaw",
-      //   transport: "streamable-http",
-      //   url: "http://devclaw-mcp:8000/mcp/"
-      // }
-    ]
+      // devclaw — async autonomous dev work via OpenHands. v2 is live as of
+      // 2026-05-25 (dsdevq/devclaw feat/v2-mcp-server-first-slice). Validated
+      // end-to-end Kit → devclaw MCP → OpenHands → real file in 9s.
+      "devclaw": {
+        transport: "streamable-http",
+        url: "http://devclaw-mcp:8000/mcp/"
+      }
+    }
   }
 
   // Notes on what we deliberately do NOT configure:
