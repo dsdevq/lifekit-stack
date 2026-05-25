@@ -2,299 +2,201 @@
 
 How lifekit-stack uses OpenClaw — the philosophy, the primitives, and why the architecture is designed the way it is.
 
+This document was rewritten 2026-05-25 after local testing exposed a load-bearing gap in our previous design. See [What we tried first and abandoned](#what-we-tried-first-and-abandoned) below for the history; the rest of the document describes the shape we settled on.
+
 ---
 
-## Philosophy: modular monolith
+## Philosophy: single Kit + external DevClaw
 
-lifekit-stack is a **modular monolith**:
+lifekit-stack runs **one OpenClaw agent — Kit** — which handles everything synchronously, and delegates **only autonomous coding work** to a separate runtime, **DevClaw**, reached via MCP.
 
-- **Single deployable unit** — one OpenClaw gateway, one `openclaw.json`, one Docker Compose stack
-- **Internally modular** — each domain (health, finance, dev, ...) is a self-contained module: its own agent, skills, hooks, plugins, and isolated memory
-- **Clear boundaries** — modules don't share memory or state, but they all live in the same runtime
-- **One orchestrator** — a top-level agent receives every user message, decides which domain agents to invoke, and merges their responses
+- **Single deployable unit** — one OpenClaw gateway, one `openclaw.json`, one Docker Compose stack.
+- **One agent, many skills** — modularity inside Kit comes from **workspace skills** installed via `openclaw skills install`. The skill manifest tells Kit when + how to invoke each domain capability.
+- **External MCP only when justified** — DevClaw (async coding runtime) and google-workspace-mcp (third-party MCP server) are the only out-of-process boundaries. Everything else is a skill or a direct CLI call from Kit.
 
-This is not microservices. There is no inter-service networking, no message queues, no separate gateways per domain. The isolation is logical, not physical.
+This is not microservices, and it is not multi-agent. Logical separation lives in skill files and the orchestrator's standing instructions (`AGENTS.md`); runtime isolation lives only in DevClaw, where async lifecycle genuinely requires it.
 
 ---
 
 ## OpenClaw primitives and how they map here
 
-### Agents — the unit of domain isolation
+### The Kit agent
 
-An agent in OpenClaw is "a fully scoped brain with its own workspace, state directory, session store, auth profiles, and model registry."
-
-**This is the primary isolation primitive.** Each domain in lifekit-stack is a separate OpenClaw agent. Agents are declared as a list under `agents.list` in `openclaw.json`:
+Kit is a single OpenClaw agent declared once in `agents.list[]`:
 
 ```json5
 {
   agents: {
     defaults: { agentRuntime: { id: "claude-cli" } },
     list: [
-      { id: "orchestrator", default: true, name: "Kit",
-        workspace: "/home/node/.openclaw/agents/orchestrator/workspace",
-        agentDir:  "/home/node/.openclaw/agents/orchestrator/agent",
-        model: "anthropic/claude-sonnet-4-6" },
-      { id: "health",    name: "Health",    workspace: "...", agentDir: "...", model: "anthropic/claude-sonnet-4-6" },
-      { id: "finance",   name: "Finance",   workspace: "...", agentDir: "...", model: "anthropic/claude-sonnet-4-6" },
-      { id: "dev",       name: "Dev",       workspace: "...", agentDir: "...", model: "anthropic/claude-sonnet-4-6" },
-      { id: "workspace", name: "Workspace", workspace: "...", agentDir: "...", model: "anthropic/claude-haiku-4-5" }
+      {
+        id: "kit",
+        default: true,
+        name: "Kit",
+        workspace: "/home/node/.openclaw/agents/kit/workspace",
+        agentDir:  "/home/node/.openclaw/agents/kit/agent",
+        model: "anthropic/claude-sonnet-4-6"
+      }
     ]
   }
 }
 ```
 
-`workspace` is the agent's working directory. `agentDir` is a separate location for agent identity / auth-profiles. Sessions always live at `~/.openclaw/agents/<id>/sessions/` regardless of either path. See the OpenClaw multi-agent docs for the full schema; this stack's concrete template is at `defaults/openclaw.multi-agent.json5`.
+Kit uses the `claude-cli` agent runtime — Claude Code subprocess driven by Denys's Pro subscription OAuth. No API keys (see [[pro-subscription-is-the-design]] in memory).
 
-Each domain agent's workspace can contain:
+The concrete config template lives at `defaults/openclaw.single-agent.json5`.
+
+### Kit's workspace
+
+Bootstrapped with `openclaw agents add` and then customized:
 
 ```
-<workspace>/
-├── AGENTS.md       # domain-specific operating instructions (required)
-├── SOUL.md         # persona for this domain (optional)
-├── USER.md         # relevant user profile for this domain (optional)
-├── MEMORY.md       # long-term domain facts
+~/.openclaw/agents/kit/workspace/
+├── AGENTS.md       operating instructions — domain handling, hard rules
+├── SOUL.md         persona (Kit, coral familiar)
+├── IDENTITY.md     name/vibe/avatar (created by `agents add`)
+├── USER.md         Denys profile slice
+├── MEMORY.md       curated long-term memory (main session only — see security note inside)
 ├── memory/
-│   └── YYYY-MM-DD.md   # daily working notes
-└── skills/         # domain-specific skill overrides
+│   └── YYYY-MM-DD.md   daily working notes
+└── skills/
+    ├── workout-claw/SKILL.md
+    ├── life-state/SKILL.md
+    └── ...
 ```
 
-Memory is **fully isolated** — health agent never sees finance memory, and vice versa.
+Bootstrap files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, etc.) are automatically injected into Kit's system prompt by OpenClaw on session start. See [system-prompt docs](https://docs.openclaw.ai/concepts/system-prompt).
 
-Reference: [https://docs.openclaw.ai/concepts/agents](https://docs.openclaw.ai/concepts/agents)
+### Skills — installed via CLI, not vendored
 
-### Skills — instructional, not architectural
+Skills are domain-specific instructions plus (usually) a backing CLI. Installed via `openclaw skills install <slug>` which drops the `SKILL.md` into `<workspace>/skills/<name>/`. Discovery is automatic on gateway start.
 
-Skills are `SKILL.md` files that teach an agent how to use its tools in a specific context. They are loaded on-demand, keeping context lean.
-
-Each domain module can have its own skills. A skill is domain-specific knowledge: how to log a workout, how to analyze spending, how to file a dev task.
-
-Skills are **not** the routing layer — that belongs in the orchestrator's `AGENTS.md`.
-
-Reference: [https://docs.openclaw.ai/concepts/skills](https://docs.openclaw.ai/concepts/skills)
-
-### Memory — per-domain, per-agent
-
-Two memory layers exist side by side:
-
-| Layer | Location | Owner | Purpose |
-|---|---|---|---|
-| OpenClaw workspace memory | `~/.openclaw/agents/<id>/workspace/MEMORY.md` | Each agent | Long-term facts, preferences, decisions for that domain |
-| lifekit domain files | `~/.life/domains/<domain>.md` | lifekit-curator | Curated knowledge extracted from conversations |
-
-Domain agents read from both. The curator writes to `~/.life/domains/` independently of OpenClaw's session lifecycle.
-
-Reference: [https://docs.openclaw.ai/concepts/memory](https://docs.openclaw.ai/concepts/memory)
-
-### agentToAgent — the routing primitive
-
-OpenClaw's `agentToAgent` tool allows one agent to dispatch a task to another agent and receive its response. This is how the orchestrator invokes domain agents:
-
-```
-User message
-  → orchestrator agent
-    → reads AGENTS.md (routing instructions)
-    → decides: health + finance relevant
-    → agentToAgent(agent: "health", task: "...")
-    → agentToAgent(agent: "finance", task: "...")
-    → merges both responses
-  → single reply to user
+```bash
+openclaw skills install workout-claw
+openclaw skills install life-state
+# restart gateway to pick up the new skills
 ```
 
-`agentToAgent` must be explicitly enabled and allowlisted in `openclaw.json`. The allowlist lists agents that may **send** messages (not which may be received):
+Don't hand-copy `SKILL.md` files; the install command is the canonical path. The CLI binaries (`workout-claw`, `life-state`, etc.) install separately via npm and must be on the gateway's PATH.
+
+Reference: [https://docs.openclaw.ai/tools/skills](https://docs.openclaw.ai/tools/skills)
+
+### MCP servers — only for genuine async boundaries
+
+Registered under `mcp.servers` in `openclaw.json`:
 
 ```json5
-tools: {
-  agentToAgent: {
-    enabled: true,
-    allow: ["orchestrator"]    // only the orchestrator dispatches; domain agents return responses only
+{
+  mcp: {
+    servers: [
+      { id: "google-workspace", transport: "streamable-http", url: "http://google-workspace-mcp:8000/mcp/" },
+      { id: "devclaw",          transport: "streamable-http", url: "http://devclaw-mcp:8000/mcp/" }
+    ]
   }
 }
 ```
 
-Reference: [https://docs.openclaw.ai/concepts/multi-agent](https://docs.openclaw.ai/concepts/multi-agent)
+When and why MCP — see [Boundary rules](#boundary-rules-when-skill-when-mcp) below.
+
+### Memory — workspace files + lifekit domains
+
+Two memory layers coexist:
+
+| Layer | Location | Owner | Purpose |
+|---|---|---|---|
+| OpenClaw workspace memory | `<workspace>/MEMORY.md` + `<workspace>/memory/YYYY-MM-DD.md` | Kit | Long-term curated facts + daily working notes |
+| lifekit domain files | `~/.life/domains/<domain>.md` | lifekit-curator | Curated knowledge extracted from conversations |
+
+Kit reads from both. The curator writes to `~/.life/domains/` independently of OpenClaw's session lifecycle.
 
 ### Bindings — single entry point
 
-Bindings route inbound channel messages to agents. All user messages enter through bindings that point to the orchestrator. The match shape is `{ channel, accountId, peer }` with most-specific-wins precedence:
+All inbound channel traffic routes to Kit:
 
 ```json5
 bindings: [
-  // Every Telegram message lands at the orchestrator.
-  { agentId: "orchestrator", match: { channel: "telegram", accountId: "*" } }
+  { agentId: "kit", match: { channel: "telegram", accountId: "*" } }
 ]
 ```
 
-Domain agents are never bound to channels directly — they only receive tasks from the orchestrator via `agentToAgent`.
-
-### Hooks and plugins
-
-OpenClaw provides hooks for intercepting the agent lifecycle (`before_prompt_build`, `before_tool_call`, `subagent_spawning`, etc.). These are the extension points for cross-cutting concerns: logging, cost tracking, rate limiting, routing overrides.
-
-Plugins extend the gateway with new channels, model providers, tools, or skills. Domain-specific plugins live close to their domain module.
-
-Reference: [https://docs.openclaw.ai/concepts/plugins](https://docs.openclaw.ai/concepts/plugins)
+Add additional channels (Discord, WhatsApp, etc.) by adding more bindings, all pointing to Kit.
 
 ---
 
-## Routing: how the orchestrator decides
+## AGENTS.md — Kit's operating instructions
 
-The orchestrator's routing logic lives in `AGENTS.md` — not in code. Claude's tool selection handles the dispatch:
+`AGENTS.md` is loaded into every Kit session. It is the contract for how Kit operates across domains.
 
-1. `AGENTS.md` lists each domain agent with a short description of what it covers
-2. The orchestrator reads the user message, matches it against domain descriptions
-3. Calls `agentToAgent` for each relevant domain (sequential within one turn)
-4. Synthesizes all responses into one reply
+### What belongs in Kit's AGENTS.md
 
-For cross-domain queries ("what should I eat to stay within my budget this week"), both health and finance agents are called. The orchestrator is responsible for merging their answers coherently.
-
-This keeps routing **declarative and auditable** — change `AGENTS.md`, change routing behavior, no code deploy.
-
----
-
-## AGENTS.md — the orchestrator's standing instructions
-
-`AGENTS.md` is loaded into every orchestrator session. It is the contract for how the agent operates.
-
-### What belongs here
-
-- Who this agent is and the scope of its authority
-- The list of domain agents and what each covers (the routing table)
-- How to handle cross-domain queries (call all relevant, merge)
-- What the orchestrator never does itself (domain work belongs to domain agents)
+- Identity (brief — full persona in `SOUL.md`)
+- For each domain: which skill or MCP server is the canonical surface, and any cross-skill rules (e.g. "check life-state before suggesting workout intensity")
+- What Kit never does (write to canonical user stores, fabricate paths, etc.)
 - Communication style
 
-### What does NOT belong here
+### What does NOT belong
 
-- Domain knowledge → lives in domain agent's `AGENTS.md` and `~/.life/domains/`
-- User preferences → `USER.md`
 - Persona detail → `SOUL.md`
-- Tool usage instructions → `TOOLS.md` or skills
+- User profile → `USER.md`
+- Tool usage instructions for specific skills → those live in each skill's `SKILL.md`
+- Implementation details about MCP server endpoints → those live in `openclaw.json`
 
-### Example orchestrator AGENTS.md
-
-```markdown
-# Kit
-
-You are Kit — Denys's personal AI assistant. You are the single entry point for
-everything. You route work to specialist domain agents and synthesize their results.
-You do not do the specialist work yourself.
+The template lives at `defaults/agents/kit/workspace/AGENTS.md`.
 
 ---
 
-## Domain agents
+## Boundary rules: when skill, when MCP
 
-Invoke the right agent(s) using the agentToAgent tool. Match the user's intent
-against these descriptions:
+Three kinds of boundaries exist in this stack. Picking the wrong one is the most common architectural mistake.
 
-- **health** — fitness, workouts, nutrition, sleep, mood, energy, body metrics
-- **finance** — spending, budgets, investments, subscriptions, tax, financial goals
-- **dev** — code, PRs, bugs, technical research, dev task management
-- **workspace** — email, calendar, documents, tasks, scheduling
+### In-process synchronous → Kit handles directly
 
----
+Default. If Kit can do it within one chat turn using its built-in Claude Code tools (Bash, Read, Write, Edit, Grep, Glob), it does. No skill needed for one-off tasks; ad-hoc requests get ad-hoc handling.
 
-## Routing rules
+### Domain capability with a backing CLI → workspace skill
 
-1. Identify all domains relevant to the user's message.
-2. Call each relevant domain agent via agentToAgent. Pass the user's message and
-   any context from ~/.life/domains/ that the domain agent would need.
-3. For cross-domain queries, call all relevant agents and merge their responses
-   into one coherent reply.
-4. If no domain covers the intent, handle it directly.
+When a domain has a real backing CLI (workout-claw, life-state, future finance tools), install it as a workspace skill. The `SKILL.md` tells Kit when + how to call it. The CLI owns its data (`~/.workout-claw/`, `~/.life/state/`, …); Kit invokes it via Bash and reports the result.
 
----
-
-## What you never do
-
-- Never do domain-specific work yourself — always delegate to the domain agent.
-- Never dump raw agent output at the user — always synthesize.
-- Never act on sensitive operations (sending email, making purchases, filing tasks)
-  without confirming intent first.
-- Never ask more than one clarifying question at a time.
-
----
-
-## Communication
-
-- Confirm routing in one line before calling: "Checking this with health and finance."
-- After agents respond, synthesize into plain language. Be concise.
-- Match Denys's register: direct, no filler.
-- If a domain agent fails or is blocked, explain clearly and suggest next steps.
-
----
-
-## Memory
-
-Save to MEMORY.md only what is durable and not already in ~/.life/domains/. Use
-today's daily note for working context within this session or week.
-```
-
----
-
-## Adding a new domain module
-
-1. Add the agent config to `openclaw.json` under `agents.<id>`
-2. Create the workspace at `~/.openclaw/agents/<id>/workspace/` with `AGENTS.md`, `SOUL.md`, `USER.md`
-3. Add any domain-specific skills to the workspace's `skills/` directory
-4. Add the agent to the orchestrator's `AGENTS.md` routing table
-5. Add it to `agentToAgent.allow` in `openclaw.json`
-
-No code changes. Routing picks it up from `AGENTS.md` on next session.
-
----
-
-## Boundary rules: when agentToAgent, when MCP
-
-Two kinds of boundaries exist in this stack. Picking the wrong one is the most common architectural mistake — wrapping HTTP around something that should just be a function call, or trying to model an async multi-hour task as a single agent session.
-
-### In-process modular → agentToAgent
-
-The default. Domain agents (health, finance, workspace, ...) live inside the same OpenClaw runtime. They're isolated by workspace, not by network. The orchestrator dispatches to them via `agentToAgent`, they return within one session, the orchestrator synthesizes the reply.
-
-Domain-specific CLIs (workout-claw, life-state, ...) are **tools the agent calls directly** — they live in the agent's workspace `skills/` and are invoked as bash. No HTTP shim, no MCP wrapper, no separate container.
+This is also the canonical path for ongoing domain conventions that should be enforced across sessions (e.g. always pass `--muscle` when logging a workout, always tag the morning check-in with `--note "morning"`).
 
 ### Out-of-process async → MCP
 
-MCP is reserved for boundaries that can't be crossed in-process. The qualifying conditions:
+MCP is reserved for boundaries that can't be crossed in-process. Two qualifying conditions:
 
-1. **Async lifecycle** — the work outlives any single agent session (multi-hour autonomous run, durable state across container restarts, callbacks fire minutes-to-hours after the originating message).
-2. **Foreign runtime** — a third-party service that already speaks MCP (e.g. google-workspace-mcp). Reimplementing it as an OpenClaw agent would be re-inventing what already exists.
+1. **Async lifecycle** — work outlives any single Kit session (multi-hour autonomous run, durable state across container restarts, callbacks fire minutes-to-hours after the originating message).
+2. **Foreign runtime** — a third-party service that already speaks MCP (e.g. `google-workspace-mcp`). Reimplementing it as a workspace skill would be re-inventing what already exists.
 
-If neither condition holds, **don't reach for MCP**. An in-process agent with workspace skills is simpler, cheaper, and easier to reason about.
+If neither holds, **don't reach for MCP**. A workspace skill + Bash call is simpler, cheaper, and easier to reason about.
 
 ### Decision heuristic
 
 | Question | If yes | If no |
 |---|---|---|
-| Does it need to run for longer than one chat turn? | MCP candidate | agentToAgent |
-| Does it already exist as a standalone MCP server? | MCP | agentToAgent |
-| Could this be a `subprocess.run(...)` inside an agent? | agentToAgent | MCP candidate |
+| Does it need to run for longer than one chat turn? | MCP candidate | Workspace skill or direct handling |
+| Does it already exist as a standalone MCP server? | MCP | Skill or direct |
+| Could this be a `subprocess.run(...)` inside Kit? | Skill or direct | MCP candidate |
 
 ### Examples in this stack
 
 | Module | Boundary | Why |
 |---|---|---|
-| health agent | agentToAgent | Synchronous: log a workout, return a PR, all in one turn |
-| finance agent | agentToAgent | Same — synchronous queries over local state |
-| workspace agent | agentToAgent | The agent itself is in-process; it happens to call the google-workspace MCP server as a tool |
-| **devclaw** | **MCP** | Autonomous OpenHands runs are async, multi-hour, callback-driven. Can't fit inside one session |
+| workout-claw, life-state | Workspace skill | Synchronous CLI invocations. Kit calls via Bash, returns within one turn |
+| Future finance CLI | Workspace skill | Same — synchronous queries over local state |
+| Ad-hoc questions, lookups, conversation | Direct (no skill) | One-off; no recurring contract to encode |
+| **devclaw** | **MCP** | Autonomous OpenHands runs are async, multi-hour, callback-driven. Can't fit inside one Kit session |
 | google-workspace | MCP | Pre-existing third-party MCP server. Not re-implementing it |
-
-A subtle but important pattern: an in-process OpenClaw agent can itself be an **MCP client**. The workspace agent isn't an MCP server — it's a regular OpenClaw agent that happens to call google-workspace-mcp as a tool. MCP-client and MCP-server roles are separate concerns.
 
 ### What this rules out
 
-- Wrapping a local CLI in an HTTP MCP server just to "be consistent" — the modular monolith *is* the consistency. Process boundaries are exceptional, not default.
-- Treating every domain as its own service. Domains are agents, not microservices.
-- Splitting the runtime to feel cleaner. Logical isolation via workspaces is enough.
+- Wrapping a local CLI in an HTTP MCP server just to "be consistent" — workspace skills *are* the consistency.
+- Treating every domain as its own OpenClaw agent. Single Kit + skills is the shape.
+- Splitting Kit into multiple OpenClaw agents for "isolation". Workspace isolation works at the agent layer but per-agent tool restrictions and `agentToAgent` don't enforce under `claude-cli` runtime (see history below).
 
 ---
 
-## DevClaw — the dev domain module
+## DevClaw — the autonomous coding boundary
 
-The dev domain is special: it's not just an OpenClaw agent, it's a fully separate service.
-
-**DevClaw** (`dsdevq/devclaw`) is an autonomous software development runtime. From OpenClaw's perspective it looks like any other MCP server — the orchestrator calls it via tools:
+The only out-of-process runtime in the stack. DevClaw is an autonomous software development runtime that exposes its capabilities as an MCP server. Kit calls it like any other MCP tool:
 
 ```
 implement_feature(project_id, goal, notify_url)
@@ -303,7 +205,7 @@ get_status(task_id)
 list_tasks(project_id?)
 ```
 
-Internally DevClaw orchestrates [OpenHands](https://github.com/All-Hands-AI/OpenHands) — an autonomous coding agent that runs in an isolated Docker sandbox, writes code, runs tests, and opens PRs. OpenClaw never knows OpenHands exists.
+Internally DevClaw orchestrates [OpenHands](https://github.com/All-Hands-AI/OpenHands) — an autonomous coding agent that runs in an isolated Docker sandbox, writes code, runs tests, and opens PRs. Kit never knows OpenHands exists.
 
 ### How they connect
 
@@ -311,40 +213,56 @@ Internally DevClaw orchestrates [OpenHands](https://github.com/All-Hands-AI/Open
 You (Telegram)
   │
   ▼
-OpenClaw orchestrator
-  └── agentToAgent → dev agent
-                       └── MCP call → DevClaw
-                                        ├── planner (Goal → Tasks)
-                                        ├── state store
-                                        ├── poller
-                                        └── REST → OpenHands (Docker)
-                                                      └── sandbox + agent loop
+OpenClaw Kit
+  └── MCP call → DevClaw
+                    ├── planner (Goal → Tasks)
+                    ├── state store
+                    ├── poller
+                    └── OpenHands (Docker sandbox + agent loop)
 ```
 
 ### Callback flow
 
-OpenClaw passes a `notify_url` when it kicks off a task. DevClaw calls it when done or blocked. OpenClaw forwards to Telegram.
+Kit passes a `notify_url` when it kicks off a task. DevClaw calls it when done or blocked. Kit forwards the notification to the originating channel.
 
 ```
-Dev agent calls:    implement_feature(goal, notify_url="openclaw.internal/notify/xyz")
-DevClaw executes:   OpenHands runs autonomously
-DevClaw calls back: POST notify_url → {status: "done", pr_url: "..."}
-OpenClaw delivers:  → Telegram message to you
+Kit calls:           implement_feature(goal, notify_url="openclaw.internal/notify/xyz")
+DevClaw executes:    OpenHands runs autonomously
+DevClaw calls back:  POST notify_url → {status: "done", pr_url: "..."}
+Kit delivers:        → Telegram message to you
 ```
 
-Neither system is coupled to the other's internals. DevClaw is a black box from OpenClaw's perspective.
+Neither system is coupled to the other's internals. DevClaw is a black box from Kit's perspective.
 
-### Why DevClaw is a separate service, not an OpenClaw agent
+### Why DevClaw is a separate service, not a skill
 
-OpenClaw agents are conversational and session-based — a session starts with a message, ends with a response. DevClaw's execution model is different: a goal can run for hours across multiple OpenHands sessions, survive container restarts, and report back asynchronously. That lifecycle doesn't fit inside an OpenClaw agent session.
+OpenClaw skills are synchronous — Kit calls the CLI, gets a result, returns within the chat turn. DevClaw's execution model is different: a goal can run for hours, survive container restarts, and report back asynchronously. That lifecycle doesn't fit inside a Kit session.
 
-See [DevClaw architecture](https://github.com/dsdevq/devclaw/blob/main/docs/architecture-v2.md) for the full design.
+See [DevClaw architecture v2](https://github.com/dsdevq/devclaw/blob/main/docs/architecture-v2.md) for the full design.
+
+---
+
+## What we tried first and abandoned
+
+The first v2 design was a **multi-agent modular monolith**: per-domain OpenClaw agents (orchestrator + workspace + health + dev), per-agent workspace + tool restrictions, dispatched via `agentToAgent`. The architecture doc described it; we built it and tested locally 2026-05-25.
+
+**It didn't work** under the `claude-cli` agent runtime — which we have to use because Pro subscription OAuth is the only auth model we accept ([[pro-subscription-is-the-design]] in memory):
+
+- `tools.allow` / `tools.deny` per-agent isn't enforced — the runtime spawns Claude Code with the full default SDK toolbox (Bash/Read/Write/Edit/Glob/Grep/ToolSearch)
+- `agentToAgent` isn't exposed as a callable tool to claude-cli — configured + enabled + allow-listed, never appeared in the agent's tool set
+- `AGENTS.md` content does reach the system prompt, but the model can choose to ignore routing instructions when it has all the default tools and can just do the work itself
+- Concrete failure: the orchestrator agent twice wrote fabricated workout logs into Denys's real `~/memory/` store instead of delegating to the health agent + workout-claw
+
+What's left of multi-agent in the codebase: nothing — the `defaults/agents/{orchestrator,workspace,health,dev}/` dirs and `defaults/openclaw.multi-agent.json5` template were deleted along with this rewrite.
+
+The boundary rule we wrote into this doc earlier — agentToAgent for in-process modularity, MCP for async — still holds in spirit. The change is that the in-process modularity primitive is **workspace skills**, not agentToAgent.
 
 ---
 
 ## Further reading
 
-- [OpenClaw concepts](https://docs.openclaw.ai/) — agents, skills, memory, tools, bindings, cron
-- [OpenClaw multi-agent](https://docs.openclaw.ai/concepts/multi-agent) — agentToAgent, bindings, workspace isolation
-- [DevClaw architecture](https://github.com/dsdevq/devclaw/blob/main/docs/architecture-v2.md) — how DevClaw + OpenHands work as the dev execution engine
-- [architecture.md](./architecture.md) — the stack-level design
+- [OpenClaw skills](https://docs.openclaw.ai/tools/skills) — workspace skill discovery + install
+- [OpenClaw system prompt](https://docs.openclaw.ai/concepts/system-prompt) — bootstrap file injection
+- [OpenClaw agent runtime](https://docs.openclaw.ai/concepts/agent) — workspace contract + session bootstrap
+- [DevClaw architecture v2](https://github.com/dsdevq/devclaw/blob/main/docs/architecture-v2.md) — DevClaw + OpenHands design
+- Memory: `architecture-openclaw-modular-monolith`, `openhands-execution-engine`, `feedback-boundary-rule-mcp-vs-a2a`

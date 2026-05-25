@@ -1,0 +1,102 @@
+// openclaw.single-agent.json5 — v2 target config (single Kit agent).
+//
+// ⚠ DO NOT MERGE THIS INTO /srv/openclaw/config/openclaw.json YET.
+//
+// v2 migrates to VPS as ONE cutover, not piecemeal. This file accumulates
+// the target shape. Cutover happens only when DevClaw v2 MCP + Kit's full
+// skill set are ready end-to-end. Until then v1 keeps running undisturbed.
+//
+// Architectural context: a previous v2 design used multiple OpenClaw agents
+// (orchestrator + per-domain) communicating via agentToAgent. Local testing
+// 2026-05-25 proved the claude-cli runtime doesn't enforce per-agent
+// tools.allow/deny and doesn't expose agentToAgent. Collapsed to a single
+// Kit agent; modularity lives in workspace skills.
+//
+// See docs/openclaw-agent-design.md and the architecture-openclaw-modular-monolith
+// memory for the full rationale.
+//
+// Deploy (when ready, full v2 cutover only):
+//   1. On VPS, install Kit via the OpenClaw CLI (creates workspace + bootstrap):
+//        openclaw agents add --non-interactive \
+//          --workspace /home/node/.openclaw/agents/kit/workspace \
+//          --agent-dir /home/node/.openclaw/agents/kit/agent \
+//          --model anthropic/claude-sonnet-4-6 kit
+//   2. Overwrite the auto-generated AGENTS.md + SOUL.md with this repo's:
+//        cp defaults/agents/kit/workspace/AGENTS.md /srv/openclaw/agents/kit/workspace/
+//        cp defaults/agents/kit/workspace/SOUL.md   /srv/openclaw/agents/kit/workspace/
+//   3. Install Kit's skills via the OpenClaw CLI (don't hand-copy SKILL.md files):
+//        openclaw skills install workout-claw
+//        openclaw skills install life-state
+//        # …more as they come online
+//   4. Merge the bindings / mcp / tools blocks below into the openclaw.json
+//      that `agents add` produced. Preserve gateway / channels / auth / plugins.
+//   5. Restart the gateway:
+//        docker compose -f compose/docker-compose.yml --env-file ... \
+//          up -d --force-recreate openclaw-gateway
+
+{
+  // agents block — `openclaw agents add kit ...` produces this. Shown here so
+  // the target config is complete and reviewable in one file. Do NOT hand-edit
+  // on the live VPS — use `agents add`, then merge our customizations on top.
+  agents: {
+    defaults: {
+      agentRuntime: { id: "claude-cli" }
+    },
+    list: [
+      {
+        id: "kit",
+        default: true,
+        name: "Kit",
+        workspace: "/home/node/.openclaw/agents/kit/workspace",
+        agentDir: "/home/node/.openclaw/agents/kit/agent",
+        // Sonnet: Kit handles every domain — needs reasoning for cross-domain
+        // synthesis and for picking the right skill / MCP tool per intent.
+        model: "anthropic/claude-sonnet-4-6"
+      }
+    ]
+  },
+
+  // All inbound channels route to Kit. Single binding, all Telegram traffic.
+  bindings: [
+    { agentId: "kit", match: { channel: "telegram", accountId: "*" } }
+  ],
+
+  // MCP servers Kit can call as tools.
+  mcp: {
+    servers: [
+      // google-workspace — Gmail/Calendar/Docs/Sheets/Drive/Tasks.
+      // Pre-existing third-party MCP server — qualifies per the boundary rule.
+      {
+        id: "google-workspace",
+        transport: "streamable-http",
+        url: "http://google-workspace-mcp:8000/mcp/"
+      }
+
+      // devclaw — async autonomous dev work via OpenHands. Uncomment when
+      // DevClaw v2 MCP server lands (currently greenfield on
+      // dsdevq/devclaw feat/architecture-v2-openhands).
+      // {
+      //   id: "devclaw",
+      //   transport: "streamable-http",
+      //   url: "http://devclaw-mcp:8000/mcp/"
+      // }
+    ]
+  }
+
+  // Notes on what we deliberately do NOT configure:
+  //
+  // - No `tools.agentToAgent` block. Single agent — nothing to dispatch to.
+  //
+  // - No per-agent `tools.allow`/`deny`. The claude-cli runtime doesn't
+  //   enforce these. Use sandbox mode (Docker) if filesystem isolation
+  //   becomes critical; until then trust AGENTS.md + SOUL.md to shape
+  //   Kit's behaviour, and rely on the skill manifests + MCP tools as the
+  //   canonical surfaces for domain work.
+  //
+  // - No per-agent `skills` allowlist. All installed skills under
+  //   <workspace>/skills/ are available to Kit. If we later need to scope
+  //   skill visibility (e.g. for shared/work channels), add agents.list[].skills.
+  //
+  // gateway / channels / auth / plugins blocks — preserve from existing
+  // openclaw.json (set up by `openclaw configure` or onboard).
+}
