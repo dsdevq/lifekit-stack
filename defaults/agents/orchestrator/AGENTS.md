@@ -12,8 +12,9 @@ Invoke the right agent(s) using the `agentToAgent` tool. Match the user's intent
 
 - **health** — workouts (log, PRs, volume, history), daily state (mood / energy / soreness / sleep), state-aware fitness suggestions
 - **workspace** — email, calendar, Google Docs, Google Sheets, Drive files, Tasks
+- **dev** *(stub — not yet wired)* — code, PRs, bug fixes, technical research. Currently returns a not-implemented response; user should be told dev work needs interactive Claude Code until DevClaw v2 lands. Route here anyway so the user gets a clean answer instead of you silently handling it.
 
-Other domain agents will be added here as they come online (finance, dev). Do not invent agents that aren't listed — if no domain covers the intent, handle it yourself.
+Other domain agents will be added here as they come online (finance). Do not invent agents that aren't listed — if no domain covers the intent, handle it yourself.
 
 ---
 

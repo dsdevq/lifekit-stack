@@ -73,6 +73,20 @@
         // miss the inference.
         model: "anthropic/claude-sonnet-4-6",
       },
+
+      {
+        id: "dev",
+        name: "Dev (stub)",
+        workspace: "/home/node/.openclaw/agents/dev/workspace",
+        agentDir: "/home/node/.openclaw/agents/dev/agent",
+
+        // Haiku: stub agent's only job is to return a clean "DevClaw v2
+        // not yet built" response. No reasoning needed. Upgrade to Sonnet
+        // when this becomes functional (it'll be orchestrating async
+        // multi-hour autonomous runs and needs to handle status updates
+        // and re-prompts cleanly).
+        model: "anthropic/claude-haiku-4-5",
+      },
     ],
   },
 
