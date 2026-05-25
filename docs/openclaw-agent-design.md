@@ -23,25 +23,35 @@ This is not microservices. There is no inter-service networking, no message queu
 
 An agent in OpenClaw is "a fully scoped brain with its own workspace, state directory, session store, auth profiles, and model registry."
 
-**This is the primary isolation primitive.** Each domain in lifekit-stack is a separate OpenClaw agent:
+**This is the primary isolation primitive.** Each domain in lifekit-stack is a separate OpenClaw agent. Agents are declared as a list under `agents.list` in `openclaw.json`:
+
+```json5
+{
+  agents: {
+    defaults: { agentRuntime: { id: "claude-cli" } },
+    list: [
+      { id: "orchestrator", default: true, name: "Kit",
+        workspace: "/home/node/.openclaw/agents/orchestrator/workspace",
+        agentDir:  "/home/node/.openclaw/agents/orchestrator/agent",
+        model: "anthropic/claude-sonnet-4-6" },
+      { id: "health",    name: "Health",    workspace: "...", agentDir: "...", model: "anthropic/claude-sonnet-4-6" },
+      { id: "finance",   name: "Finance",   workspace: "...", agentDir: "...", model: "anthropic/claude-sonnet-4-6" },
+      { id: "dev",       name: "Dev",       workspace: "...", agentDir: "...", model: "anthropic/claude-sonnet-4-6" },
+      { id: "workspace", name: "Workspace", workspace: "...", agentDir: "...", model: "anthropic/claude-haiku-4-5" }
+    ]
+  }
+}
+```
+
+`workspace` is the agent's working directory. `agentDir` is a separate location for agent identity / auth-profiles. Sessions always live at `~/.openclaw/agents/<id>/sessions/` regardless of either path. See the OpenClaw multi-agent docs for the full schema; this stack's concrete template is at `defaults/openclaw.multi-agent.json5`.
+
+Each domain agent's workspace can contain:
 
 ```
-openclaw.json
-├── agents
-│   ├── orchestrator      ← receives every user message, decides routing
-│   ├── health            ← health, fitness, mood, sleep
-│   ├── finance           ← spending, budgets, investments
-│   ├── dev               ← code, PRs, technical research
-│   └── ...
-```
-
-Each domain agent has its own workspace:
-
-```
-~/.openclaw/agents/<domain>/workspace/
-├── AGENTS.md       # domain-specific operating instructions
-├── SOUL.md         # persona for this domain
-├── USER.md         # relevant user profile for this domain
+<workspace>/
+├── AGENTS.md       # domain-specific operating instructions (required)
+├── SOUL.md         # persona for this domain (optional)
+├── USER.md         # relevant user profile for this domain (optional)
 ├── MEMORY.md       # long-term domain facts
 ├── memory/
 │   └── YYYY-MM-DD.md   # daily working notes
@@ -90,13 +100,13 @@ User message
   → single reply to user
 ```
 
-`agentToAgent` must be explicitly enabled and allowlisted in `openclaw.json`:
+`agentToAgent` must be explicitly enabled and allowlisted in `openclaw.json`. The allowlist lists agents that may **send** messages (not which may be received):
 
 ```json5
 tools: {
   agentToAgent: {
     enabled: true,
-    allow: ["health", "finance", "dev"]
+    allow: ["orchestrator"]    // only the orchestrator dispatches; domain agents return responses only
   }
 }
 ```
@@ -105,11 +115,12 @@ Reference: [https://docs.openclaw.ai/concepts/multi-agent](https://docs.openclaw
 
 ### Bindings — single entry point
 
-Bindings route inbound channel messages to agents. All user messages enter through **one binding** pointing to the orchestrator:
+Bindings route inbound channel messages to agents. All user messages enter through bindings that point to the orchestrator. The match shape is `{ channel, accountId, peer }` with most-specific-wins precedence:
 
 ```json5
 bindings: [
-  { peer: "{{ telegram_chat_id }}", agent: "orchestrator" }
+  // Every Telegram message lands at the orchestrator.
+  { agentId: "orchestrator", match: { channel: "telegram", accountId: "*" } }
 ]
 ```
 
@@ -229,6 +240,53 @@ today's daily note for working context within this session or week.
 5. Add it to `agentToAgent.allow` in `openclaw.json`
 
 No code changes. Routing picks it up from `AGENTS.md` on next session.
+
+---
+
+## Boundary rules: when agentToAgent, when MCP
+
+Two kinds of boundaries exist in this stack. Picking the wrong one is the most common architectural mistake — wrapping HTTP around something that should just be a function call, or trying to model an async multi-hour task as a single agent session.
+
+### In-process modular → agentToAgent
+
+The default. Domain agents (health, finance, workspace, ...) live inside the same OpenClaw runtime. They're isolated by workspace, not by network. The orchestrator dispatches to them via `agentToAgent`, they return within one session, the orchestrator synthesizes the reply.
+
+Domain-specific CLIs (workout-claw, life-state, ...) are **tools the agent calls directly** — they live in the agent's workspace `skills/` and are invoked as bash. No HTTP shim, no MCP wrapper, no separate container.
+
+### Out-of-process async → MCP
+
+MCP is reserved for boundaries that can't be crossed in-process. The qualifying conditions:
+
+1. **Async lifecycle** — the work outlives any single agent session (multi-hour autonomous run, durable state across container restarts, callbacks fire minutes-to-hours after the originating message).
+2. **Foreign runtime** — a third-party service that already speaks MCP (e.g. google-workspace-mcp). Reimplementing it as an OpenClaw agent would be re-inventing what already exists.
+
+If neither condition holds, **don't reach for MCP**. An in-process agent with workspace skills is simpler, cheaper, and easier to reason about.
+
+### Decision heuristic
+
+| Question | If yes | If no |
+|---|---|---|
+| Does it need to run for longer than one chat turn? | MCP candidate | agentToAgent |
+| Does it already exist as a standalone MCP server? | MCP | agentToAgent |
+| Could this be a `subprocess.run(...)` inside an agent? | agentToAgent | MCP candidate |
+
+### Examples in this stack
+
+| Module | Boundary | Why |
+|---|---|---|
+| health agent | agentToAgent | Synchronous: log a workout, return a PR, all in one turn |
+| finance agent | agentToAgent | Same — synchronous queries over local state |
+| workspace agent | agentToAgent | The agent itself is in-process; it happens to call the google-workspace MCP server as a tool |
+| **devclaw** | **MCP** | Autonomous OpenHands runs are async, multi-hour, callback-driven. Can't fit inside one session |
+| google-workspace | MCP | Pre-existing third-party MCP server. Not re-implementing it |
+
+A subtle but important pattern: an in-process OpenClaw agent can itself be an **MCP client**. The workspace agent isn't an MCP server — it's a regular OpenClaw agent that happens to call google-workspace-mcp as a tool. MCP-client and MCP-server roles are separate concerns.
+
+### What this rules out
+
+- Wrapping a local CLI in an HTTP MCP server just to "be consistent" — the modular monolith *is* the consistency. Process boundaries are exceptional, not default.
+- Treating every domain as its own service. Domains are agents, not microservices.
+- Splitting the runtime to feel cleaner. Logical isolation via workspaces is enough.
 
 ---
 
