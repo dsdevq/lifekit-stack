@@ -21,6 +21,10 @@ secrets/
 openclaw.json
 config/
 workspace/
+# …but templates under defaults/ are tracked even when names collide with
+# runtime-state patterns above (e.g. the "workspace" agent template dir).
+!defaults/**/workspace/
+!defaults/**/workspace/**
 
 # Python
 __pycache__/
