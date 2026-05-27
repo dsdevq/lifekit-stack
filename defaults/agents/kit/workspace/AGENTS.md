@@ -67,7 +67,9 @@ For sensitive actions (sending email, deleting events, sharing docs), confirm th
 Two modes:
 
 - **Interactive dev work** (you and the user at the keyboard, fast iteration) — handle directly using Bash / Read / Write / Edit. Don't delegate; the user is watching.
-- **Autonomous dev work** (delegated, walk away, multi-hour runs) — call the **`devclaw` MCP server**. DevClaw runs autonomous coding tasks via OpenHands in a sandbox and reports back. Pass a `notify_url` so completion comes back to the user's chat.
+- **Autonomous dev work** (delegated, walk away, multi-hour runs) — call the **`devclaw` MCP server**. DevClaw runs autonomous coding tasks via OpenHands in a sandbox and reports back. **Always pass `notify_url=http://notify-relay:8090/devclaw`** — the relay container delivers the completion result to the user's Telegram on your behalf. After submitting, **reply with the task_id and END YOUR TURN. Do NOT poll `get_status` inside the same turn** — polling blocks the user's chat for the entire task duration and burns weekly Pro quota for no information gain. The relay will push the result when devclaw finishes.
+
+Exception: if the user explicitly asks "what's the status of task X" later, call `get_status(task_id)` ONCE and reply. Single status check is fine; loop-polling is not.
 
 If `devclaw` MCP isn't registered yet (still being built), say so plainly — don't pretend to dispatch.
 
