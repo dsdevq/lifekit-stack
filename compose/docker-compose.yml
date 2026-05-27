@@ -1,13 +1,16 @@
 # lifekit-stack compose file.
 #
-# Defines seven services:
+# Services:
 #   openclaw-gateway     — the runtime gateway (channels, cron, skills, agent); loopback bind on 18789
 #   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations
-#   lifekit-orchestrator — long-running Python scheduler (sweep + supervise) replacing the OpenClaw cron entries
 #   lifekit-curator      — queue-drain memory maintainer; defensive parsing with dead-letter quarantine
 #   lifekit-dashboard    — read-only web UI over ~/.life and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
 #   devclaw-mcp          — DevClaw v2 MCP server (autonomous coding via OpenHands); internal-only on :8000
+#   notify-relay         — turns devclaw's notify_url POST into a Telegram message via the gateway CLI; internal-only on :8090
+#
+# Retired in the 2026-05-27 v2 cutover:
+#   lifekit-orchestrator — v1 LangGraph scheduler; replaced by devclaw-mcp's in-process queue.
 #
 # Run from the repo root after `scripts/bootstrap-vps.sh` has set up the host:
 #   cd /srv/lifekit-stack && ./scripts/deploy.sh
@@ -367,6 +370,49 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+
+  notify-relay:
+    <<: *policy
+    # Turns devclaw's notify_url POST into a Telegram message via
+    # `docker exec compose-openclaw-gateway-1 openclaw message send`.
+    # See compose/notify-relay/server.js.
+    #
+    # Needs the docker socket to exec into the gateway container; accepted
+    # trade-off for a single-user single-host stack. No host port binding —
+    # devclaw reaches it on the compose network at http://notify-relay:8090/.
+    build:
+      context: ./notify-relay
+    image: notify-relay:local
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    depends_on:
+      - openclaw-gateway
+    environment:
+      NOTIFY_RELAY_PORT: "8090"
+      GATEWAY_CONTAINER: compose-openclaw-gateway-1
+      LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      # Needed so the relay can `docker exec` the openclaw CLI inside the
+      # gateway container. Read-write because `docker exec` requires it.
+      - /var/run/docker.sock:/var/run/docker.sock
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "8090"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # NOTE: the prior health-claw MCP wrapper service was removed in the v2
   # cutover. workout-claw + life-state are now Kit's workspace skills (called
