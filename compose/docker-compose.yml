@@ -81,6 +81,11 @@ services:
       # ~/.life/ is bind-mounted in so OpenClaw skills can read/write it.
       # The container-side path matches what skills expect.
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      # ~/.life-state/ holds orchestrator runtime state — queue.jsonl,
+      # .curator-proposed/, flat-bucket tasks/, intake_index.json,
+      # orchestrator.sqlite. Split from the knowledge layer per
+      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
       # Claude CLI session creds so the agent harness can authenticate to Anthropic.
       # Both the dir (.claude/) and the sibling .claude.json file are required —
       # .claude.json holds oauthAccount which tells the SDK this is a Pro
@@ -169,6 +174,7 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -197,6 +203,9 @@ services:
       OPENCLAW_HOME: /home/node
       TZ: ${OPENCLAW_TZ:-UTC}
       LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-default}
+      # Resolves to /home/node/.life-state inside the container — orchestrator.sqlite,
+      # flat-bucket tasks/, intake_index.json. See proposal 2026-05-27-runtime-knowledge-split.
+      LIFEKIT_STATE_DIR: /home/node/.life-state
       # Wire git credential helper via env, not gitconfig — the .gitconfig
       # bind-mount is read-only and `gh auth setup-git` would fail to write
       # to it ("Device or resource busy" because of how bind-mounted files
@@ -208,8 +217,12 @@ services:
     volumes:
       # Orchestrator source — installed editable at container start.
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
-      # ~/.life is the store the daemon reaps/dispatches/supervises.
+      # ~/.life is the knowledge layer the daemon reads project specs from.
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      # ~/.life-state is the runtime state the daemon owns — orchestrator.sqlite,
+      # flat-bucket tasks/, intake_index.json. Split from the knowledge layer per
+      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
       # Claude CLI session creds — same mounts as openclaw-gateway. Both the
       # dir and the sibling .claude.json are required for the SDK to recognize
       # the Pro subscription session.
@@ -285,9 +298,11 @@ services:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       ASPNETCORE_URLS: http://+:8080
       LIFEKIT_LIFE_ROOT: /life
+      LIFEKIT_STATE_DIR: /life-state
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/life:ro
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/life-state:ro
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/openclaw-workspace:ro
     cap_drop:
       - NET_RAW
@@ -318,11 +333,20 @@ services:
           memory: 256m
     environment:
       LIFEKIT_ROOT: /srv/life
+      # Runtime state moved out of the knowledge layer per
+      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
+      # The curator reads queue.jsonl from the state mount and tracks the
+      # dream-cycle marker there too.
+      LIFEKIT_STATE_DIR: /srv/lifekit-state
+      LIFEKIT_QUEUE_FILE: /srv/lifekit-state/queue.jsonl
+      LIFEKIT_DEAD_LETTER_FILE: /srv/lifekit-state/queue.dead-letter.jsonl
+      LIFEKIT_CONSOLIDATION_MARKER: /srv/lifekit-state/.last_consolidation
       LIFEKIT_WAKE_INTERVAL_SECONDS: ${LIFEKIT_WAKE_INTERVAL_SECONDS:-900}
       LIFEKIT_LOG_LEVEL: ${LIFEKIT_LOG_LEVEL:-INFO}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/srv/life
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/srv/lifekit-state
       # Reuse the host user's Claude CLI session — no API key needed.
       # The path inside the container is /home/lifekit because we renamed
       # the base image's `node` user to `lifekit` (UID 1000 match).
