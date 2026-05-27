@@ -11,10 +11,27 @@
 
 FROM node:22-trixie
 
-# docker CLI for exec'ing into the gateway container
+# docker CLI for exec'ing into the gateway container.
+# Debian trixie's `docker.io` package only ships the daemon, not the CLI.
+# Pull the static CLI binary directly — small, no deps, version-pinned.
+ARG DOCKER_VERSION=27.3.1
+ARG TARGETARCH=arm64
 RUN apt-get update \
- && apt-get install -y --no-install-recommends docker.io ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && ARCH_TAR=$(case "$TARGETARCH" in \
+        amd64) echo "x86_64" ;; \
+        arm64) echo "aarch64" ;; \
+        *) echo "$TARGETARCH" ;; \
+    esac) \
+ && curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH_TAR}/docker-${DOCKER_VERSION}.tgz" \
+    | tar -xz -C /tmp \
+ && mv /tmp/docker/docker /usr/local/bin/docker \
+ && chmod +x /usr/local/bin/docker \
+ && rm -rf /tmp/docker \
+ && apt-get purge -y curl \
+ && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/* \
+ && docker --version
 
 WORKDIR /app
 COPY server.js /app/server.js
