@@ -31,13 +31,13 @@ if (!CHAT) {
 }
 
 const STATUS_ICON = {
-  done: "✅", // ✅
-  failed: "❌", // ❌
+  done: "✅",
+  failed: "❌",
 };
 
 function formatMessage(row) {
   const status = String(row?.status ?? "unknown");
-  const icon = STATUS_ICON[status] ?? "ℹ️"; // ℹ️
+  const icon = STATUS_ICON[status] ?? "ℹ️";
   const kind = String(row?.kind ?? "task");
   const goal = String(row?.goal ?? "").slice(0, 240);
   const taskId = String(row?.task_id ?? "?");
