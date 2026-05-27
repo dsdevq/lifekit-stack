@@ -1,25 +1,30 @@
 /**
  * notify-relay — HTTP webhook that turns devclaw's notify_url POST into a
- * Telegram message via the gateway's openclaw CLI.
+ * Telegram message via Telegram's Bot API.
  *
  * Endpoints:
- *   GET  /health     — liveness probe, returns {ok:true}
- *   POST /devclaw    — body = devclaw task row JSON; formats + sends as
- *                      Telegram message to LIFEKIT_TELEGRAM_CHAT
+ *   GET  /health   — liveness probe → {ok:true}
+ *   POST /devclaw  — body = devclaw task row JSON; formats + sends as
+ *                    Telegram message to $LIFEKIT_TELEGRAM_CHAT
  *
- * Send path: `docker exec <gateway> openclaw message send --channel telegram
- *   --target <chat_id> --message "..."`. Requires the docker socket mounted
- *   read-only and the gateway container to be the named one.
+ * Required env:
+ *   TELEGRAM_BOT_TOKEN     — bot token (from @BotFather)
+ *   LIFEKIT_TELEGRAM_CHAT  — chat id to send to
+ *
+ * No docker socket, no exec, no extra deps. ~150 lines of Node.
  */
 
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
 
 const PORT = Number(process.env.NOTIFY_RELAY_PORT ?? 8090);
+const TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const CHAT = process.env.LIFEKIT_TELEGRAM_CHAT ?? "";
-const GATEWAY = process.env.GATEWAY_CONTAINER ?? "compose-openclaw-gateway-1";
 const MAX_MSG_CHARS = 3500; // Telegram is 4096; leave headroom
 
+if (!TOKEN) {
+  process.stderr.write("TELEGRAM_BOT_TOKEN env var is required\n");
+  process.exit(1);
+}
 if (!CHAT) {
   process.stderr.write("LIFEKIT_TELEGRAM_CHAT env var is required\n");
   process.exit(1);
@@ -66,42 +71,24 @@ function formatMessage(row) {
   return msg;
 }
 
-function sendTelegram(text) {
-  return new Promise((resolve, reject) => {
-    const args = [
-      "exec",
-      GATEWAY,
-      "openclaw",
-      "message",
-      "send",
-      "--channel",
-      "telegram",
-      "--target",
-      CHAT,
-      "--message",
+async function sendTelegram(text) {
+  const url = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      chat_id: CHAT,
       text,
-      "--json",
-    ];
-    const child = spawn("docker", args, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c) => (stdout += c));
-    child.stderr.on("data", (c) => (stderr += c));
-    child.on("error", (err) =>
-      reject(new Error(`spawn docker failed: ${err.message}`)),
-    );
-    child.on("close", (code) => {
-      if (code === 0) resolve(stdout.trim());
-      else
-        reject(
-          new Error(
-            `docker exec exited ${code}: ${stderr.trim() || stdout.trim()}`,
-          ),
-        );
-    });
+      disable_web_page_preview: true,
+    }),
   });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.ok !== true) {
+    throw new Error(
+      `Telegram API ${res.status}: ${body.description ?? "unknown error"}`,
+    );
+  }
+  return body.result;
 }
 
 async function readBody(req) {
@@ -153,7 +140,7 @@ const server = createServer(async (req, res) => {
   const message = formatMessage(payload);
   try {
     const result = await sendTelegram(message);
-    log(`delivered task=${taskId}: ${result}`);
+    log(`delivered task=${taskId} message_id=${result?.message_id ?? "?"}`);
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
   } catch (err) {
@@ -165,7 +152,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   process.stderr.write(
-    `notify-relay listening on 0.0.0.0:${PORT}, gateway=${GATEWAY}, chat=${CHAT}\n`,
+    `notify-relay listening on 0.0.0.0:${PORT}, chat=${CHAT}\n`,
   );
 });
 

@@ -373,36 +373,22 @@ services:
 
   notify-relay:
     <<: *policy
-    # Turns devclaw's notify_url POST into a Telegram message via
-    # `docker exec compose-openclaw-gateway-1 openclaw message send`.
-    # See compose/notify-relay/server.js.
-    #
-    # Needs the docker socket to exec into the gateway container; accepted
-    # trade-off for a single-user single-host stack. No host port binding —
-    # devclaw reaches it on the compose network at http://notify-relay:8090/.
+    # Turns devclaw's notify_url POST into a Telegram message via direct
+    # Telegram Bot API call. See compose/notify-relay/server.js.
+    # No host port binding — devclaw reaches it on the compose network
+    # at http://notify-relay:8090/devclaw.
     build:
       context: ./notify-relay
     image: notify-relay:local
     deploy:
       resources:
         limits:
-          memory: 256m
-    depends_on:
-      - openclaw-gateway
+          memory: 128m
     environment:
       NOTIFY_RELAY_PORT: "8090"
-      GATEWAY_CONTAINER: compose-openclaw-gateway-1
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-}
       TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      # Needed so the relay can `docker exec` the openclaw CLI inside the
-      # gateway container. Read-write because `docker exec` requires it.
-      - /var/run/docker.sock:/var/run/docker.sock
-    # Grant the container's node user access to the host docker socket by
-    # adding it to the host's docker group. GID defaults to 990 (Debian
-    # default); override DOCKER_GID in .env if different on your host.
-    group_add:
-      - "${DOCKER_GID:-990}"
     cap_drop:
       - NET_RAW
       - NET_ADMIN
