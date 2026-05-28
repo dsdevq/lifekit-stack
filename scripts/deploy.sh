@@ -89,6 +89,19 @@ say "syncing config/modules.yaml → ${LIFE_DIR}/system/modules.yaml"
 mkdir -p "${LIFE_DIR}/system"
 cp "${REPO_DIR}/defaults/modules.yaml" "${LIFE_DIR}/system/modules.yaml"
 
+# Runtime-state dir — split from /srv/life per proposal
+# 2026-05-27-runtime-knowledge-split. Idempotent guard so an in-place upgrade
+# (without a fresh bootstrap-vps.sh run) still ends up with the dirs the compose
+# bind-mounts expect.
+STATE_DIR="${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}"
+if [ ! -d "${STATE_DIR}" ]; then
+  say "creating ${STATE_DIR} (runtime-state dir, first-time upgrade)"
+  sudo install -d -o "$(whoami)" -g "$(whoami)" -m 0750 \
+    "${STATE_DIR}" \
+    "${STATE_DIR}/tasks" \
+    "${STATE_DIR}/.curator-proposed"
+fi
+
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 say "docker compose up -d --build"

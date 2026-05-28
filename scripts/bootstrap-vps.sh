@@ -90,7 +90,7 @@ ufw --force enable
 
 # ─── Bind-mount directories ───────────────────────────────────────────────────
 
-say "Creating /srv/{lifekit-stack,life,openclaw/*}"
+say "Creating /srv/{lifekit-stack,life,openclaw/*} + /var/lib/lifekit"
 install -d -o "$LIFEKIT_USER" -g "$LIFEKIT_USER" -m 0750 \
   "$REPO_DIR" \
   /srv/life \
@@ -98,6 +98,14 @@ install -d -o "$LIFEKIT_USER" -g "$LIFEKIT_USER" -m 0750 \
   /srv/openclaw/config \
   /srv/openclaw/workspace \
   /srv/openclaw/secret-key
+
+# Runtime-state dir — split from /srv/life per proposal
+# 2026-05-27-runtime-knowledge-split. Holds orchestrator.sqlite, queue.jsonl,
+# .curator-proposed/, .last_consolidation, flat-bucket tasks/, intake_index.json.
+install -d -o "$LIFEKIT_USER" -g "$LIFEKIT_USER" -m 0750 \
+  /var/lib/lifekit \
+  /var/lib/lifekit/tasks \
+  /var/lib/lifekit/.curator-proposed
 
 # ─── Clone the stack repo ─────────────────────────────────────────────────────
 

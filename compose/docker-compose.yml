@@ -1,20 +1,31 @@
 # lifekit-stack compose file.
 #
-# Defines eight services:
+# Services:
 #   openclaw-gateway     — the runtime gateway (channels, cron, skills, agent); loopback bind on 18789
 #   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations
-#   lifekit-orchestrator — long-running Python scheduler (sweep + supervise) replacing the OpenClaw cron entries
 #   lifekit-curator      — queue-drain memory maintainer; defensive parsing with dead-letter quarantine
 #   lifekit-dashboard    — read-only web UI over ~/.life and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
-#   devclaw-mcp          — MCP bridge between openclaw-gateway and the devclaw orchestrator; internal-only on :8000
-#   health-claw          — MCP bridge wrapping workout-claw + life-state CLIs; internal-only on :8000
+#   devclaw-mcp          — DevClaw v2 MCP server (autonomous coding via OpenHands); internal-only on :8000
+#   notify-relay         — turns devclaw's notify_url POST into a Telegram message via the gateway CLI; internal-only on :8090
+#
+# Retired in the 2026-05-27 v2 cutover:
+#   lifekit-orchestrator — v1 LangGraph scheduler; replaced by devclaw-mcp's in-process queue.
 #
 # Run from the repo root after `scripts/bootstrap-vps.sh` has set up the host:
 #   cd /srv/lifekit-stack && ./scripts/deploy.sh
 #
 # Or directly:
 #   docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env up -d --build
+#
+# AD-HOC COMMANDS (recreate one service, rebuild one image, etc.) MUST also
+# pass --env-file /srv/openclaw/config/.env, OR pre-source it:
+#   set -a; source /srv/openclaw/config/.env; set +a
+#   docker compose up -d <service>
+# Without one of these, ${OPENCLAW_GATEWAY_TOKEN}, ${TELEGRAM_BOT_TOKEN}, and
+# friends substitute to empty strings; the gateway boots and crash-loops.
+# scripts/deploy.sh handles this for you. Bypassing the script = remember the
+# flag.
 #
 # Uniform service policy (log rotation 50MB×3, restart on-failure:5, per-service
 # memory cap) is defined in the x-policy anchor below and merged into every
@@ -62,6 +73,7 @@ services:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
+      PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
@@ -70,6 +82,11 @@ services:
       # ~/.life/ is bind-mounted in so OpenClaw skills can read/write it.
       # The container-side path matches what skills expect.
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      # ~/.life-state/ holds orchestrator runtime state — queue.jsonl,
+      # .curator-proposed/, flat-bucket tasks/, intake_index.json,
+      # orchestrator.sqlite. Split from the knowledge layer per
+      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
       # Claude CLI session creds so the agent harness can authenticate to Anthropic.
       # Both the dir (.claude/) and the sibling .claude.json file are required —
       # .claude.json holds oauthAccount which tells the SDK this is a Pro
@@ -100,6 +117,12 @@ services:
         if ! command -v claude >/dev/null 2>&1; then
           mkdir -p /home/node/.npm-global
           npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+        fi
+        if ! command -v clawhub >/dev/null 2>&1; then
+          npm install -g clawhub 2>&1 | tail -3
+        fi
+        if ! command -v summarize >/dev/null 2>&1; then
+          npm install -g @steipete/summarize 2>&1 | tail -3
         fi
         exec "$$@"
       - --
@@ -158,6 +181,7 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -186,6 +210,9 @@ services:
       OPENCLAW_HOME: /home/node
       TZ: ${OPENCLAW_TZ:-UTC}
       LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-default}
+      # Resolves to /home/node/.life-state inside the container — orchestrator.sqlite,
+      # flat-bucket tasks/, intake_index.json. See proposal 2026-05-27-runtime-knowledge-split.
+      LIFEKIT_STATE_DIR: /home/node/.life-state
       # Wire git credential helper via env, not gitconfig — the .gitconfig
       # bind-mount is read-only and `gh auth setup-git` would fail to write
       # to it ("Device or resource busy" because of how bind-mounted files
@@ -197,8 +224,12 @@ services:
     volumes:
       # Orchestrator source — installed editable at container start.
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
-      # ~/.life is the store the daemon reaps/dispatches/supervises.
+      # ~/.life is the knowledge layer the daemon reads project specs from.
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      # ~/.life-state is the runtime state the daemon owns — orchestrator.sqlite,
+      # flat-bucket tasks/, intake_index.json. Split from the knowledge layer per
+      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
       # Claude CLI session creds — same mounts as openclaw-gateway. Both the
       # dir and the sibling .claude.json are required for the SDK to recognize
       # the Pro subscription session.
@@ -274,9 +305,11 @@ services:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       ASPNETCORE_URLS: http://+:8080
       LIFEKIT_LIFE_ROOT: /life
+      LIFEKIT_STATE_DIR: /life-state
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/life:ro
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/life-state:ro
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/openclaw-workspace:ro
     cap_drop:
       - NET_RAW
@@ -307,11 +340,20 @@ services:
           memory: 256m
     environment:
       LIFEKIT_ROOT: /srv/life
+      # Runtime state moved out of the knowledge layer per
+      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
+      # The curator reads queue.jsonl from the state mount and tracks the
+      # dream-cycle marker there too.
+      LIFEKIT_STATE_DIR: /srv/lifekit-state
+      LIFEKIT_QUEUE_FILE: /srv/lifekit-state/queue.jsonl
+      LIFEKIT_DEAD_LETTER_FILE: /srv/lifekit-state/queue.dead-letter.jsonl
+      LIFEKIT_CONSOLIDATION_MARKER: /srv/lifekit-state/.last_consolidation
       LIFEKIT_WAKE_INTERVAL_SECONDS: ${LIFEKIT_WAKE_INTERVAL_SECONDS:-900}
       LIFEKIT_LOG_LEVEL: ${LIFEKIT_LOG_LEVEL:-INFO}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${LIFEKIT_LIFE_DIR:-/srv/life}:/srv/life
+      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/srv/lifekit-state
       # Reuse the host user's Claude CLI session — no API key needed.
       # The path inside the container is /home/lifekit because we renamed
       # the base image's `node` user to `lifekit` (UID 1000 match).
@@ -324,25 +366,33 @@ services:
 
   devclaw-mcp:
     <<: *policy
-    # MCP bridge: openclaw-gateway calls tools here; this container runs
-    # devclaw-orchestrator subcommands locally (DEVCLAW_LOCAL=1) against the
-    # shared /srv/life bind-mount. Internal-only — no host port binding.
-    # Register in openclaw.json via compose/devclaw-mcp/mcp-config.json.
-    image: lifekit-openclaw:local
+    # DevClaw v2 — autonomous coding runtime exposed via streamable-http MCP.
+    # Replaces v1's lifekit-orchestrator container. Clones v2 source at build
+    # time; inherits Claude Code OAuth via the bind-mounted ~/.claude session.
+    # Internal-only — no host port binding. See compose/devclaw-mcp/README.md.
+    build:
+      context: ./devclaw-mcp
+      args:
+        DEVCLAW_REF: ${DEVCLAW_REF:-feat/v2-mcp-server-first-slice}
+    image: devclaw-mcp:local
     deploy:
       resources:
         limits:
-          memory: 512m
+          memory: 1g
     depends_on:
       - openclaw-gateway
     environment:
-      DEVCLAW_LOCAL: "1"
-      DEVCLAW_LIFE_DIR: /srv/life
-      DEVCLAW_MCP_LOG_LEVEL: ${DEVCLAW_MCP_LOG_LEVEL:-INFO}
+      DEVCLAW_TRANSPORT: http
+      DEVCLAW_PORT: "8000"
+      DEVCLAW_DB: /var/lib/devclaw/devclaw.db
+      CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+      OPENHANDS_SUPPRESS_BANNER: "1"
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
-      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/srv/life
+      # Persistent state — survives container recreates.
+      - devclaw-state:/var/lib/devclaw
+      # Inherit Claude Code OAuth from the same files the gateway uses.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
     cap_drop:
@@ -352,25 +402,6 @@ services:
       - no-new-privileges:true
     expose:
       - "8000"
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        export PATH="/home/node/.orchestrator-venv/bin:$$PATH"
-        if [ ! -x /home/node/.orchestrator-venv/bin/pip ]; then
-          python3 -m venv /home/node/.orchestrator-venv
-          /home/node/.orchestrator-venv/bin/pip install --upgrade pip --quiet
-        fi
-        /home/node/.orchestrator-venv/bin/pip install -e /home/node/.openclaw/workspace/devclaw/orchestrator --quiet
-        exec "$$@"
-      - --
-    command:
-      - devclaw-mcp
-      - --transport
-      - http
-      - --port
-      - "8000"
     healthcheck:
       test:
         - CMD-SHELL
@@ -378,83 +409,46 @@ services:
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 60s
 
-  health-claw:
+  notify-relay:
     <<: *policy
-    # MCP bridge: openclaw-gateway calls tools here; this container invokes
-    # workout-claw and life-state CLIs locally against the bind-mounted data dirs.
-    # Internal-only — no host port binding.
-    # Register in openclaw.json via compose/health-claw/mcp-config.json.
-    #
-    # CLIs are installed from workspace external dirs at container start:
-    #   /srv/openclaw/workspace/external/workout-claw  (npm link)
-    #   /srv/openclaw/workspace/external/life-state    (npm install -g)
-    #   /srv/openclaw/workspace/external/health-claw   (pip install -e)
-    # rsync these from your laptop before deploy.
-    image: lifekit-openclaw:local
+    # Turns devclaw's notify_url POST into a Telegram message via direct
+    # Telegram Bot API call. See compose/notify-relay/server.js.
+    # No host port binding — devclaw reaches it on the compose network
+    # at http://notify-relay:8090/devclaw.
+    build:
+      context: ./notify-relay
+    image: notify-relay:local
     deploy:
       resources:
         limits:
-          memory: 512m
-    depends_on:
-      - openclaw-gateway
+          memory: 128m
     environment:
-      HEALTH_MCP_LOG_LEVEL: ${HEALTH_MCP_LOG_LEVEL:-INFO}
+      NOTIFY_RELAY_PORT: "8090"
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-}
       TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
-      # workout-claw stores data at ~/.workout-claw — mount to expected path inside container
-      - ${WORKOUT_CLAW_DATA_DIR:-/srv/workout-claw}:/home/node/.workout-claw
-      # life-state stores data at ~/.life/state — covered by the life bind-mount
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
     cap_drop:
       - NET_RAW
       - NET_ADMIN
     security_opt:
       - no-new-privileges:true
     expose:
-      - "8000"
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        export NPM_CONFIG_PREFIX=/home/node/.npm-global
-        export PATH="/home/node/.npm-global/bin:/home/node/.health-venv/bin:$$PATH"
-
-        # Python venv for the health-claw-mcp server
-        if [ ! -x /home/node/.health-venv/bin/pip ]; then
-          python3 -m venv /home/node/.health-venv
-          /home/node/.health-venv/bin/pip install --upgrade pip --quiet
-        fi
-        /home/node/.health-venv/bin/pip install -e /home/node/.openclaw/workspace/external/health-claw --quiet
-
-        # Node CLIs — install from workspace external dir on first start
-        mkdir -p /home/node/.npm-global
-        if ! command -v workout-claw >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/workspace/external/workout-claw --quiet
-        fi
-        if ! command -v life-state >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/workspace/external/life-state --quiet
-        fi
-
-        exec "$$@"
-      - --
-    command:
-      - health-claw-mcp
-      - --transport
-      - http
-      - --port
-      - "8000"
+      - "8090"
     healthcheck:
       test:
         - CMD-SHELL
-        - "curl -fs http://127.0.0.1:8000/health || exit 1"
+        - "node -e \"fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 10s
+
+  # NOTE: the prior health-claw MCP wrapper service was removed in the v2
+  # cutover. workout-claw + life-state are now Kit's workspace skills (called
+  # as bash by the single Kit agent), not an MCP-wrapped sibling container.
+  # See architecture-openclaw-modular-monolith memory + docs/openclaw-agent-design.md.
 
   google-workspace-mcp:
     <<: *policy
@@ -502,3 +496,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+# ── Named volumes ──────────────────────────────────────────────────────────
+volumes:
+  devclaw-state:
+    # SQLite state for DevClaw v2's task queue. Survives container recreates.

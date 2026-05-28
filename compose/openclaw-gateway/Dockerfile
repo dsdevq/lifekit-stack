@@ -6,6 +6,13 @@ FROM ${OPENCLAW_BASE_IMAGE}
 
 USER root
 
+# Pin OpenClaw to a specific version on top of the base image. The base
+# image bakes in whatever openclaw was current when it was built; we pin
+# explicitly so version upgrades survive container recreates. Bump this
+# line to upgrade.
+ARG OPENCLAW_VERSION=2026.5.26
+RUN npm i -g --force openclaw@${OPENCLAW_VERSION}
+
 # Enforce pipefail in any RUN that pipes commands (hadolint DL4006).
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
