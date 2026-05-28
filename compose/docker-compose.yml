@@ -452,6 +452,17 @@ services:
       - no-new-privileges:true
     expose:
       - "8000"
+    # Loopback-only host binding for the /dashboard SSE feed. Mirrors the
+    # lifekit-dashboard (18790) and openclaw-gateway (18789) pattern: bound
+    # to 127.0.0.1 so the port is reachable ONLY through an SSH tunnel,
+    # never from the public IP. From a laptop:
+    #   ssh -L 18791:127.0.0.1:18791 lifekit-vps
+    #   open http://localhost:18791/dashboard
+    # The /mcp endpoint still goes through the compose-internal openclaw-
+    # gateway → devclaw-mcp:8000 hop — this binding only exposes the
+    # observability surface.
+    ports:
+      - "127.0.0.1:18791:8000"
     healthcheck:
       test:
         - CMD-SHELL
