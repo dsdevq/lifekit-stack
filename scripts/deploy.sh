@@ -145,32 +145,45 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
 say "docker compose up -d --build"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
 
-# ─── Verify devclaw-mcp and devclaw-sandbox runner.py match ─────────────────
+# ─── Verify image runner.py matches upstream at DEVCLAW_REF ─────────────────
 #
-# Both images clone the same DEVCLAW_REF and copy v2/python-runner/runner.py
-# in. After a successful build they MUST md5-match — otherwise BuildKit
-# cached a stale clone layer in one of them and the sandbox will run a
-# different runner.py than the MCP server expects. This catches the exact
-# silent failure that burned a smoke-test cycle on 2026-05-28.
-say "verifying runner.py matches between devclaw-mcp and devclaw-sandbox"
+# Both devclaw-mcp and devclaw-sandbox clone DEVCLAW_REF and copy
+# v2/python-runner/runner.py in. After build, the runner.py inside each
+# image MUST md5-match the file on github at the resolved SHA. That
+# catches TWO failure modes:
+#   (a) cross-image drift: BuildKit cached a stale clone layer in one of
+#       them (the 2026-05-28 smoke-test miss).
+#   (b) stale-default ref: both images consistently built from a stale
+#       branch that no longer tracks upstream changes (the 2026-05-28
+#       deploy that "succeeded" but shipped pre-fix code because the
+#       compose default still pointed at a long-merged feat branch).
+# Comparing both image files against the upstream SHA's runner.py
+# catches both at once.
+say "verifying runner.py matches dsdevq/devclaw@${DEVCLAW_REF_INPUT}"
 MCP_MD5=$(docker run --rm --entrypoint md5sum devclaw-mcp:local \
   /app/v2/python-runner/runner.py | awk '{print $1}')
 SBX_MD5=$(docker run --rm --entrypoint md5sum devclaw-sandbox:local \
   /opt/devclaw/runner.py | awk '{print $1}')
-if [[ "${MCP_MD5}" != "${SBX_MD5}" ]]; then
+UPSTREAM_URL="https://raw.githubusercontent.com/dsdevq/devclaw/${DEVCLAW_SHA}/v2/python-runner/runner.py"
+UPSTREAM_MD5=$(curl -fsS "${UPSTREAM_URL}" | md5sum | awk '{print $1}')
+if [[ -z "${UPSTREAM_MD5}" || "${UPSTREAM_MD5}" == "d41d8cd98f00b204e9800998ecf8427e" ]]; then
+  echo "✗ could not fetch upstream runner.py from ${UPSTREAM_URL}" >&2
+  exit 1
+fi
+if [[ "${MCP_MD5}" != "${UPSTREAM_MD5}" || "${SBX_MD5}" != "${UPSTREAM_MD5}" ]]; then
   cat >&2 <<EOF
-✗ runner.py mismatch between devclaw-mcp and devclaw-sandbox:
-    devclaw-mcp:local      /app/v2/python-runner/runner.py  md5=${MCP_MD5}
-    devclaw-sandbox:local  /opt/devclaw/runner.py           md5=${SBX_MD5}
-  Both should clone from DEVCLAW_REF=${DEVCLAW_SHA}; one image kept a
-  cached clone layer. Re-run with:
-    docker compose -f ${COMPOSE_FILE} build --no-cache devclaw-mcp
-    docker compose -f ${COMPOSE_FILE} --profile build-only build \\
-      --no-cache devclaw-sandbox
+✗ runner.py md5 mismatch:
+    upstream (${DEVCLAW_REF_INPUT}@${DEVCLAW_SHA:0:7})  md5=${UPSTREAM_MD5}
+    devclaw-mcp:local                                 md5=${MCP_MD5}
+    devclaw-sandbox:local                             md5=${SBX_MD5}
+  One or both images are out of sync with upstream. Common causes:
+    - DEVCLAW_REF points at a stale branch (default is 'main')
+    - BuildKit cached a clone layer that didn't see upstream move
+  Re-run with --no-cache on the stale image(s).
 EOF
   exit 1
 fi
-echo "  ✓ both images carry runner.py md5=${MCP_MD5}"
+echo "  ✓ runner.py md5=${UPSTREAM_MD5} matches upstream + both images"
 
 # ─── Skill native-deps install ───────────────────────────────────────────────
 #

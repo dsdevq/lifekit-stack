@@ -43,7 +43,7 @@ RUN npm install -g \
 
 # ---- DevClaw v2 source -----------------------------------------------------
 ARG DEVCLAW_REPO=https://github.com/dsdevq/devclaw.git
-ARG DEVCLAW_REF=feat/v2-mcp-server-first-slice
+ARG DEVCLAW_REF=main
 
 RUN git clone --depth 1 --branch "${DEVCLAW_REF}" "${DEVCLAW_REPO}" /app
 WORKDIR /app/v2
