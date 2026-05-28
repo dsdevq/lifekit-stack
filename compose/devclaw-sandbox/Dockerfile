@@ -9,7 +9,7 @@
 # The repo is cloned at build time at the same ref as devclaw-mcp so the
 # python-runner code matches the runner module the MCP server invokes.
 
-ARG DEVCLAW_REF=feat/v2-mcp-server-first-slice
+ARG DEVCLAW_REF=main
 
 FROM alpine/git AS source
 ARG DEVCLAW_REF
