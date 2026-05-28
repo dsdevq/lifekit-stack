@@ -129,6 +129,18 @@ install -m 644 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.timer" \
 systemctl daemon-reload
 systemctl enable --now lifekit-dashboard-redeploy.timer
 
+# ─── openclaw-config sync timer ───────────────────────────────────────────────
+
+say "Installing openclaw-config sync script + systemd units"
+install -m 755 "$REPO_DIR/scripts/sync/openclaw-config-sync.sh" \
+  /usr/local/bin/openclaw-config-sync.sh
+install -m 644 "$REPO_DIR/scripts/sync/openclaw-config-sync.service" \
+  /etc/systemd/system/openclaw-config-sync.service
+install -m 644 "$REPO_DIR/scripts/sync/openclaw-config-sync.timer" \
+  /etc/systemd/system/openclaw-config-sync.timer
+systemctl daemon-reload
+systemctl enable --now openclaw-config-sync.timer
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
 say "Host bootstrap complete."

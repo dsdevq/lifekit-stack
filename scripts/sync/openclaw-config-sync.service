@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync VPS openclaw config to dsdevq/openclaw-config
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=lifekit
+Group=lifekit
+ExecStart=/usr/local/bin/openclaw-config-sync.sh
+
+[Install]
+WantedBy=multi-user.target
