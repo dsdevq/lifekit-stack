@@ -102,10 +102,70 @@ if [ ! -d "${STATE_DIR}" ]; then
     "${STATE_DIR}/.curator-proposed"
 fi
 
+# ─── Resolve DEVCLAW_REF to a concrete SHA ──────────────────────────────────
+#
+# Both devclaw-mcp and devclaw-sandbox have a `RUN git clone --branch
+# "${DEVCLAW_REF}"` layer. When DEVCLAW_REF is a moving ref like `main`,
+# BuildKit's cache key for that layer doesn't see the upstream SHA move —
+# so a `--build` rebuild reuses the cached clone and ships stale code.
+# Resolving the ref to a SHA before passing it through makes the cache key
+# content-addressed and invalidates exactly when main moves. This is the
+# fix for the deploy-was-incomplete failure mode that burned a smoke-test
+# cycle on 2026-05-28 (devclaw-mcp got the new runner.py via --no-cache;
+# devclaw-sandbox kept the old one because its layer was still cached).
+DEVCLAW_REF_INPUT="${DEVCLAW_REF:-main}"
+say "resolving devclaw ref ${DEVCLAW_REF_INPUT} → SHA"
+DEVCLAW_SHA="$(git ls-remote https://github.com/dsdevq/devclaw.git \
+  "refs/heads/${DEVCLAW_REF_INPUT}" "refs/tags/${DEVCLAW_REF_INPUT}" \
+  | awk 'NR==1{print $1}')"
+if [[ -z "${DEVCLAW_SHA}" ]]; then
+  # Not a branch or tag — assume the caller passed a SHA already.
+  DEVCLAW_SHA="${DEVCLAW_REF_INPUT}"
+fi
+export DEVCLAW_REF="${DEVCLAW_SHA}"
+echo "  using DEVCLAW_REF=${DEVCLAW_SHA}"
+
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 say "docker compose up -d --build"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
+
+# ─── devclaw-sandbox: per-task ephemeral container the MCP spawns ────────────
+#
+# Not in the default `up` rotation (profile: build-only). Build explicitly
+# here so the image stays in sync with devclaw-mcp's runner.py — they share
+# v2/python-runner/runner.py and the dashboard event-stream silently breaks
+# if they drift.
+say "building devclaw-sandbox (per-task isolation image)"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  --profile build-only build devclaw-sandbox
+
+# ─── Verify devclaw-mcp and devclaw-sandbox runner.py match ─────────────────
+#
+# Both images clone the same DEVCLAW_REF and copy v2/python-runner/runner.py
+# in. After a successful build they MUST md5-match — otherwise BuildKit
+# cached a stale clone layer in one of them and the sandbox will run a
+# different runner.py than the MCP server expects. This catches the exact
+# silent failure that burned a smoke-test cycle on 2026-05-28.
+say "verifying runner.py matches between devclaw-mcp and devclaw-sandbox"
+MCP_MD5=$(docker run --rm --entrypoint md5sum devclaw-mcp:local \
+  /app/v2/python-runner/runner.py | awk '{print $1}')
+SBX_MD5=$(docker run --rm --entrypoint md5sum devclaw-sandbox:local \
+  /opt/devclaw/runner.py | awk '{print $1}')
+if [[ "${MCP_MD5}" != "${SBX_MD5}" ]]; then
+  cat >&2 <<EOF
+✗ runner.py mismatch between devclaw-mcp and devclaw-sandbox:
+    devclaw-mcp:local      /app/v2/python-runner/runner.py  md5=${MCP_MD5}
+    devclaw-sandbox:local  /opt/devclaw/runner.py           md5=${SBX_MD5}
+  Both should clone from DEVCLAW_REF=${DEVCLAW_SHA}; one image kept a
+  cached clone layer. Re-run with:
+    docker compose -f ${COMPOSE_FILE} build --no-cache devclaw-mcp
+    docker compose -f ${COMPOSE_FILE} --profile build-only build \\
+      --no-cache devclaw-sandbox
+EOF
+  exit 1
+fi
+echo "  ✓ both images carry runner.py md5=${MCP_MD5}"
 
 # ─── Skill native-deps install ───────────────────────────────────────────────
 #
