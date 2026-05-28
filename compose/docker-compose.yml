@@ -364,12 +364,31 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # Build-only — devclaw-sandbox is never run as a long-lived service. It
+  # publishes the devclaw-sandbox:local image that devclaw-mcp spawns one
+  # container of per OpenHands task (via the host docker socket). Keep it
+  # in the compose file so `docker compose build` covers it; the empty
+  # entrypoint never executes because it's not in `up` rotation. Build with:
+  #   docker compose -f compose/docker-compose.yml build devclaw-sandbox
+  devclaw-sandbox:
+    profiles: ["build-only"]
+    build:
+      context: ./devclaw-sandbox
+      args:
+        DEVCLAW_REF: ${DEVCLAW_REF:-feat/v2-mcp-server-first-slice}
+    image: devclaw-sandbox:local
+    # Placeholder command — service is never started via `up`.
+    command: ["true"]
+
   devclaw-mcp:
     <<: *policy
     # DevClaw v2 — autonomous coding runtime exposed via streamable-http MCP.
     # Replaces v1's lifekit-orchestrator container. Clones v2 source at build
     # time; inherits Claude Code OAuth via the bind-mounted ~/.claude session.
-    # Internal-only — no host port binding. See compose/devclaw-mcp/README.md.
+    # Slice 5: spawns one devclaw-sandbox container per task through the host
+    # docker socket. The socket mount + group_add + path-translation envs
+    # below make that work. Internal-only — no host port binding.
+    # See compose/devclaw-mcp/README.md.
     build:
       context: ./devclaw-mcp
       args:
@@ -381,6 +400,11 @@ services:
           memory: 1g
     depends_on:
       - openclaw-gateway
+    # group_add: grant the non-root `node` user access to the host docker
+    # socket. The numeric GID must match the host's `docker` group (usually
+    # 999 on Debian; override via env if your host differs).
+    group_add:
+      - "${LIFEKIT_DOCKER_GID:-999}"
     environment:
       DEVCLAW_TRANSPORT: http
       DEVCLAW_PORT: "8000"
@@ -388,10 +412,36 @@ services:
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
       OPENHANDS_SUPPRESS_BANNER: "1"
+      # Sandcastle runner config (slice 5):
+      #   DEVCLAW_SANDBOX_IMAGE        — which image to spawn per task
+      #   DEVCLAW_HOST_CLAUDE_DIR      — host-side path to bind RO into the
+      #                                  sandbox; differs from
+      #                                  CLAUDE_CONFIG_DIR which is the
+      #                                  container-side view
+      #   DEVCLAW_CONTAINER_PATH_PREFIX/DEVCLAW_HOST_PATH_PREFIX — when the
+      #     MCP server (in this container) is asked to create a workspace
+      #     at /var/lib/devclaw/workspaces/<id>, sandcastle-runner swaps the
+      #     prefix for the host's view of the same bind-mount so the
+      #     spawned sandbox container can actually see it.
+      DEVCLAW_SANDBOX_IMAGE: devclaw-sandbox:local
+      DEVCLAW_HOST_CLAUDE_DIR: ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}
+      DEVCLAW_CONTAINER_PATH_PREFIX: /var/lib/devclaw/workspaces
+      DEVCLAW_HOST_PATH_PREFIX: ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Persistent state — survives container recreates.
       - devclaw-state:/var/lib/devclaw
+      # Workspaces — shared between this container and the per-task
+      # devclaw-sandbox containers it spawns. Bind-mounted from the host
+      # so docker (running on the host) can bind-mount the same path into
+      # each spawned sandbox.
+      - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/var/lib/devclaw/workspaces
+      # Host docker socket — REQUIRED for spawning sandcastle containers.
+      # Grants effective root on the host; the no-new-privileges + cap_drop
+      # above plus the non-root user inside this container are the only
+      # mitigations. Acceptable here because devclaw-mcp's only network
+      # input is the compose-internal MCP endpoint behind openclaw-gateway.
+      - /var/run/docker.sock:/var/run/docker.sock
       # Inherit Claude Code OAuth from the same files the gateway uses.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
