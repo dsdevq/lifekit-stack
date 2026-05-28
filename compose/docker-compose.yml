@@ -73,6 +73,7 @@ services:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
       OPENCLAW_DISABLE_BONJOUR: "1"   # we're behind a single-host network — no mDNS
+      PATH: /home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
@@ -116,6 +117,12 @@ services:
         if ! command -v claude >/dev/null 2>&1; then
           mkdir -p /home/node/.npm-global
           npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+        fi
+        if ! command -v clawhub >/dev/null 2>&1; then
+          npm install -g clawhub 2>&1 | tail -3
+        fi
+        if ! command -v summarize >/dev/null 2>&1; then
+          npm install -g @steipete/summarize 2>&1 | tail -3
         fi
         exec "$$@"
       - --
