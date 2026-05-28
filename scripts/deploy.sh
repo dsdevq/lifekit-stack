@@ -102,43 +102,48 @@ if [ ! -d "${STATE_DIR}" ]; then
     "${STATE_DIR}/.curator-proposed"
 fi
 
-# ─── Resolve DEVCLAW_REF to a concrete SHA ──────────────────────────────────
+# ─── Log the resolved devclaw SHA ───────────────────────────────────────────
 #
-# Both devclaw-mcp and devclaw-sandbox have a `RUN git clone --branch
-# "${DEVCLAW_REF}"` layer. When DEVCLAW_REF is a moving ref like `main`,
-# BuildKit's cache key for that layer doesn't see the upstream SHA move —
-# so a `--build` rebuild reuses the cached clone and ships stale code.
-# Resolving the ref to a SHA before passing it through makes the cache key
-# content-addressed and invalidates exactly when main moves. This is the
-# fix for the deploy-was-incomplete failure mode that burned a smoke-test
-# cycle on 2026-05-28 (devclaw-mcp got the new runner.py via --no-cache;
-# devclaw-sandbox kept the old one because its layer was still cached).
+# The devclaw-mcp + devclaw-sandbox Dockerfiles take DEVCLAW_REF and feed
+# it straight to `git clone --branch`, which only accepts a branch or tag
+# name (not a SHA). So we keep DEVCLAW_REF as a ref and only print the
+# resolved SHA — useful for the deploy log and the md5-mismatch error
+# message at the end.
 DEVCLAW_REF_INPUT="${DEVCLAW_REF:-main}"
-say "resolving devclaw ref ${DEVCLAW_REF_INPUT} → SHA"
+say "resolving devclaw ref ${DEVCLAW_REF_INPUT} → SHA (for logging)"
 DEVCLAW_SHA="$(git ls-remote https://github.com/dsdevq/devclaw.git \
   "refs/heads/${DEVCLAW_REF_INPUT}" "refs/tags/${DEVCLAW_REF_INPUT}" \
   | awk 'NR==1{print $1}')"
-if [[ -z "${DEVCLAW_SHA}" ]]; then
-  # Not a branch or tag — assume the caller passed a SHA already.
-  DEVCLAW_SHA="${DEVCLAW_REF_INPUT}"
-fi
-export DEVCLAW_REF="${DEVCLAW_SHA}"
-echo "  using DEVCLAW_REF=${DEVCLAW_SHA}"
+DEVCLAW_SHA="${DEVCLAW_SHA:-unknown}"
+echo "  DEVCLAW_REF=${DEVCLAW_REF_INPUT}  DEVCLAW_SHA=${DEVCLAW_SHA}"
+
+# ─── Rebuild devclaw-mcp + devclaw-sandbox with --no-cache ──────────────────
+#
+# Both images have a `RUN git clone --branch "${DEVCLAW_REF}"` layer.
+# When DEVCLAW_REF is a moving ref like `main`, BuildKit's cache key for
+# that layer doesn't track upstream movement — a normal `--build` reuses
+# the cached clone and ships stale code (the silent failure that burned
+# a smoke-test cycle on 2026-05-28: devclaw-mcp got the new runner.py
+# manually; devclaw-sandbox kept the old one because its layer cached).
+#
+# `--no-cache` rebuilds these two images deterministically. Pip + npm
+# layers add ~3-4 min total per image but that's the price of correctness
+# until we either pin DEVCLAW_REF to a SHA at the caller (and modify the
+# Dockerfile to handle SHAs) or add a CACHEBUST arg.
+#
+# Built BEFORE the main `up -d --build` so the subsequent compose call
+# is a cache-hit no-op for these images.
+say "rebuilding devclaw-mcp --no-cache (avoid stale git-clone layer)"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  build --no-cache devclaw-mcp
+say "rebuilding devclaw-sandbox --no-cache (profile=build-only)"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  --profile build-only build --no-cache devclaw-sandbox
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 say "docker compose up -d --build"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
-
-# ─── devclaw-sandbox: per-task ephemeral container the MCP spawns ────────────
-#
-# Not in the default `up` rotation (profile: build-only). Build explicitly
-# here so the image stays in sync with devclaw-mcp's runner.py — they share
-# v2/python-runner/runner.py and the dashboard event-stream silently breaks
-# if they drift.
-say "building devclaw-sandbox (per-task isolation image)"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-  --profile build-only build devclaw-sandbox
 
 # ─── Verify devclaw-mcp and devclaw-sandbox runner.py match ─────────────────
 #
