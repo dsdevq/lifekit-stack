@@ -8,7 +8,13 @@
 # Auth: inherits Claude Code OAuth from the gateway's bind-mounted
 # ~/.claude session — same model as openclaw-gateway. No API key, ever.
 
-FROM node:22-bookworm
+# node:22-trixie (Debian 13) ships Python 3.13.5 by default. openhands-sdk
+# 1.23+ requires Python >= 3.12, so bookworm (Debian 12, Python 3.11) no
+# longer satisfies the venv install below. The previously-running image
+# was built when the bookworm tag still aliased to a 3.13-bearing variant;
+# after Debian 13 stabilised, that stopped being true and rebuilds began
+# failing with "openhands-sdk>=1.23.0 (from versions: none)".
+FROM node:22-trixie
 
 # ---- system deps -----------------------------------------------------------
 RUN apt-get update \
