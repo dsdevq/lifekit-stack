@@ -17,10 +17,21 @@
 FROM node:22-trixie
 
 # ---- system deps -----------------------------------------------------------
+# docker-ce-cli: needed for slice 5 — the MCP server spawns per-task
+# devclaw-sandbox containers via the host docker socket bind-mounted by
+# compose. We install ONLY the client; the daemon stays on the host.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 python3-venv python3-pip \
-      git curl ca-certificates \
+      git curl ca-certificates gnupg \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+ && chmod a+r /etc/apt/keyrings/docker.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/debian trixie stable" > /etc/apt/sources.list.d/docker.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends docker-ce-cli \
  && rm -rf /var/lib/apt/lists/*
 
 # ---- claude CLI + ACP bridge (npm-installed globally) ---------------------
