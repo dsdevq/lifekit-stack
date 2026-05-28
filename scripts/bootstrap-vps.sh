@@ -12,6 +12,10 @@
 # Or clone the repo first and run:
 #   sudo TAILSCALE_AUTH_KEY=... TAILSCALE_HOSTNAME=lifekit-vps ./scripts/bootstrap-vps.sh
 #
+# Optional: set RUNNER_REG_TOKEN to also install the GitHub Actions
+# self-hosted runner. Fetch a fresh 1-hour token with:
+#   gh api -X POST /repos/dsdevq/lifekit-stack/actions/runners/registration-token --jq .token
+#
 # After this script: scp your .env to /srv/openclaw/config/.env, then run ./scripts/deploy.sh.
 
 set -euo pipefail
@@ -26,6 +30,15 @@ LIFEKIT_UID="${LIFEKIT_UID:-1000}"
 REPO_URL="${REPO_URL:-https://github.com/dsdevq/lifekit-stack.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/srv/lifekit-stack}"
+
+# GitHub Actions self-hosted runner — optional. Skip the install block if
+# RUNNER_REG_TOKEN is unset (operator can configure manually later).
+RUNNER_REG_TOKEN="${RUNNER_REG_TOKEN:-}"
+RUNNER_VERSION="${RUNNER_VERSION:-2.334.0}"
+RUNNER_NAME="${RUNNER_NAME:-${TAILSCALE_HOSTNAME}-netcup}"
+RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,Linux,ARM64,arm64}"
+RUNNER_REPO_URL="${RUNNER_REPO_URL:-${REPO_URL%.git}}"
+RUNNER_DIR="${RUNNER_DIR:-/home/${LIFEKIT_USER}/actions-runner}"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -140,6 +153,39 @@ install -m 644 "$REPO_DIR/scripts/sync/openclaw-config-sync.timer" \
   /etc/systemd/system/openclaw-config-sync.timer
 systemctl daemon-reload
 systemctl enable --now openclaw-config-sync.timer
+
+# ─── GitHub Actions self-hosted runner ────────────────────────────────────────
+
+if [[ -n "$RUNNER_REG_TOKEN" ]]; then
+  if systemctl list-units --type=service --no-pager 2>/dev/null | grep -q '^actions.runner.'; then
+    say "GitHub Actions runner already installed; skipping (use sudo ./svc.sh uninstall to redo)"
+  else
+    say "Installing GitHub Actions self-hosted runner $RUNNER_NAME (v$RUNNER_VERSION)"
+    mkdir -p "$RUNNER_DIR"
+    chown "$LIFEKIT_USER:$LIFEKIT_USER" "$RUNNER_DIR"
+    tarball="actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz"
+    if [[ ! -f "$RUNNER_DIR/$tarball" ]]; then
+      sudo -u "$LIFEKIT_USER" curl -fsSL \
+        -o "$RUNNER_DIR/$tarball" \
+        "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${tarball}"
+    fi
+    if [[ ! -x "$RUNNER_DIR/config.sh" ]]; then
+      sudo -u "$LIFEKIT_USER" tar -C "$RUNNER_DIR" -xzf "$RUNNER_DIR/$tarball"
+    fi
+    # libicu76 etc. — bundled .NET runtime needs them.
+    bash "$RUNNER_DIR/bin/installdependencies.sh"
+    sudo -u "$LIFEKIT_USER" bash -c "cd '$RUNNER_DIR' && ./config.sh \
+      --url '$RUNNER_REPO_URL' \
+      --token '$RUNNER_REG_TOKEN' \
+      --name '$RUNNER_NAME' \
+      --labels '$RUNNER_LABELS' \
+      --work _work \
+      --unattended --replace"
+    ( cd "$RUNNER_DIR" && ./svc.sh install "$LIFEKIT_USER" && ./svc.sh start )
+  fi
+else
+  say "RUNNER_REG_TOKEN not set; skipping Actions runner install (fetch a token with: gh api -X POST /repos/<owner>/<repo>/actions/runners/registration-token --jq .token, then re-run this script)"
+fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
