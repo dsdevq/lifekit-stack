@@ -21,6 +21,7 @@ say() { printf "\n\033[1;33m[$(ts)] %s\033[0m\n" "$*"; }
 
 BACKUP="${1:-}"
 if [[ -z "$BACKUP" ]]; then
+  # shellcheck disable=SC2012  # backup filenames are controlled; ls -t newest-first is fine here
   BACKUP="$(ls -t "${OPENCLAW_CONFIG}".bak-cutover-* 2>/dev/null | head -1 || true)"
 fi
 [[ -n "$BACKUP" && -f "$BACKUP" ]] || { echo "no backup found — pass the path explicitly" >&2; exit 1; }

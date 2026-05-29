@@ -57,7 +57,7 @@ fi
 say "Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg ufw git rsync sshfs python3
+apt-get install -y -qq ca-certificates curl gnupg ufw git rsync sshfs python3 python3-venv
 
 # ─── lifekit user ─────────────────────────────────────────────────────────────
 

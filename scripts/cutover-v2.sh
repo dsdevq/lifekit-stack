@@ -95,7 +95,8 @@ preflight() {
 
 # ── phase: backup ────────────────────────────────────────────────────────────
 backup_config() {
-  local backup="${OPENCLAW_CONFIG}.bak-cutover-$(date +%s)"
+  local backup
+  backup="${OPENCLAW_CONFIG}.bak-cutover-$(date +%s)"
   say "Backing up openclaw.json → $backup"
   run cp -a "$OPENCLAW_CONFIG" "$backup"
 }

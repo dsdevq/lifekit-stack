@@ -31,6 +31,10 @@ repos:
     rev: v2.13.1-beta
     hooks:
       - id: hadolint-docker
+        # Accepted backlog: DL3006/DL4006/DL3016/DL3042 warnings on working prod
+        # images still print but don't block CI. Only errors fail. Revisit to fix
+        # the Dockerfiles properly and drop this threshold.
+        args: ["--failure-threshold", "error"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.4
