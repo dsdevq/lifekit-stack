@@ -1,0 +1,12 @@
+[Unit]
+Description=Rotate /srv/life memory store (logrotate + markdown archival, no LLM)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=lifekit
+Group=lifekit
+ExecStart=/usr/local/bin/memory-rotate.sh
+
+[Install]
+WantedBy=multi-user.target
