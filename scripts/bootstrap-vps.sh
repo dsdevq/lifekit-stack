@@ -154,6 +154,23 @@ install -m 644 "$REPO_DIR/scripts/sync/openclaw-config-sync.timer" \
 systemctl daemon-reload
 systemctl enable --now openclaw-config-sync.timer
 
+# ─── memory-store rotation timer ──────────────────────────────────────────────
+# Monthly rotation of the /srv/life memory store + OpenClaw agent trajectories
+# (logrotate + rotate-extras.py, no LLM). The rotate-extras.py + logrotate-memory.conf
+# scripts live in the dsdevq/life repo at /srv/life/system/ (delivered by memory-sync);
+# this only installs the host units + wrapper. Runtime state -> /var/lib/lifekit/rotation.
+
+say "Installing memory-store rotation script + systemd units"
+install -d -o "$LIFEKIT_USER" -g "$LIFEKIT_USER" -m 750 /var/lib/lifekit/rotation
+install -m 755 "$REPO_DIR/scripts/rotate/memory-rotate.sh" \
+  /usr/local/bin/memory-rotate.sh
+install -m 644 "$REPO_DIR/scripts/rotate/memory-rotate.service" \
+  /etc/systemd/system/memory-rotate.service
+install -m 644 "$REPO_DIR/scripts/rotate/memory-rotate.timer" \
+  /etc/systemd/system/memory-rotate.timer
+systemctl daemon-reload
+systemctl enable --now memory-rotate.timer
+
 # ─── GitHub Actions self-hosted runner ────────────────────────────────────────
 
 if [[ -n "$RUNNER_REG_TOKEN" ]]; then
