@@ -36,7 +36,9 @@ modules:
       - "add a task to my Google Tasks"
 
   - id: health-claw
-    description: Log workouts, track PRs and volume per muscle group, record daily mood/energy/soreness/sleep, get state-aware fitness suggestions
+    description: >-
+      Log workouts, track PRs and volume per muscle group, record daily
+      mood/energy/soreness/sleep, get state-aware fitness suggestions
     mcp: http://health-claw:8000/mcp/
     examples:
       - "log today's workout: bench 4x10 at 60, pullups 4x10"

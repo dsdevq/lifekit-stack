@@ -15,11 +15,15 @@ jobs:
         with:
           fetch-depth: 0  # gitleaks needs history
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - uses: pre-commit/action@v3.0.1
+      # setup-python@v5 can't provision Python on this arm64 self-hosted runner
+      # ("version '3.13' ... not found for Debian 13"). The runner already ships
+      # system python3 + python3-venv (installed by bootstrap), so run pre-commit
+      # from a throwaway venv instead.
+      - name: Run pre-commit
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pcvenv"
+          "$RUNNER_TEMP/pcvenv/bin/pip" install --quiet --upgrade pip pre-commit
+          "$RUNNER_TEMP/pcvenv/bin/pre-commit" run --all-files --show-diff-on-failure --color=always
 
   gitleaks-full:
     name: Gitleaks full-history scan

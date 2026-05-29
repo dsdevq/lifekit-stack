@@ -35,4 +35,4 @@ SQLite at `/var/lib/devclaw/devclaw.db` inside the container, mounted from the `
 
 ## Registering with OpenClaw
 
-`mcp.servers` in `openclaw.json` is an **object keyed by id**, NOT an array (runtime-confirmed 2026-05-25). See `mcp-config.json` for the exact snippet. The `cutover-v2.sh` script does this merge for you.
+`mcp.servers` in `openclaw.json` is an **object keyed by id**, NOT an array (runtime-confirmed 2026-05-25). See `mcp-config.json` for the exact snippet to merge into `openclaw.json`.
