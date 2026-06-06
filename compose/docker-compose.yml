@@ -364,59 +364,11 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  goalclaw:
-    <<: *policy
-    # The goal-layer planner — drives durable goals across heartbeat ticks AND
-    # devclaw-done events (/wake), and dispatches code actions DOWN to devclaw-mcp
-    # over HTTP MCP. Before each action it prepares a pristine workspace checkout
-    # (per-action freshness). Idle ticks cost ~0 tokens. Goal state lives under
-    # the vault at /srv/life/goals. Clones its public repo at build time.
-    build:
-      context: ./goalclaw
-      args:
-        GOALCLAW_REF: ${GOALCLAW_REF:-main}
-    image: goalclaw:local
-    depends_on:
-      - devclaw-mcp
-    deploy:
-      resources:
-        limits:
-          # The plan step runs claude (node) via the Agent SDK — 256m OOM-kills
-          # it (SIGKILL -9) on larger prompts. Give it headroom like devclaw.
-          memory: 1g
-    environment:
-      GOALCLAW_GOALS_DIR: /srv/life/goals
-      # devclaw-mcp is internal-only on the compose network, no auth token set.
-      DEVCLAW_URL: http://devclaw-mcp:8000/mcp
-      DEVCLAW_TOKEN: ${DEVCLAW_TOKEN:-}
-      # notify-relay's generic passthrough endpoint → Telegram.
-      GOALCLAW_NOTIFY_URL: http://notify-relay:8090/text
-      # Event path: devclaw calls this back on task-done → immediate tick.
-      GOALCLAW_WAKE_URL: http://goalclaw:8500/wake
-      GOALCLAW_WAKE_PORT: "8500"
-      GOALCLAW_PLANNER_MODEL: ${GOALCLAW_PLANNER_MODEL:-sonnet}
-      GOALCLAW_TICK_INTERVAL_SECONDS: ${GOALCLAW_TICK_INTERVAL_SECONDS:-900}
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      # The vault — goalclaw reads/writes only under /srv/life/goals.
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/srv/life
-      # Workspaces — SAME host dir + container path as devclaw-mcp, so the
-      # workspace_dir goalclaw preps is the exact path it hands to devclaw.
-      - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/var/lib/devclaw/workspaces
-      # Reuse the host user's Claude CLI session for the plan step — no API key.
-      # Both files: .claude.json carries oauthAccount → Pro session, not API billing.
-      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/lifekit/.claude
-      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/lifekit/.claude.json
-      # git push/clone + gh auth for workspace prep on private repos.
-      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/lifekit/.config/gh
-      - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/lifekit/.gitconfig:ro
-    expose:
-      - "8500"
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
+  # NOTE: the standalone `goalclaw` service was retired 2026-06-06 — its goal
+  # layer is now an in-process subsystem of devclaw-mcp (see devclaw's
+  # docs/architecture-v2.md → "The goal layer"). The goal env + the /srv/life
+  # mount it needed moved onto devclaw-mcp below; there is no separate /wake
+  # endpoint or HTTP MCP hop anymore.
 
   # Build-only — devclaw-sandbox is never run as a long-lived service. It
   # publishes the devclaw-sandbox:local image that devclaw-mcp spawns one
@@ -494,10 +446,23 @@ services:
       DEVCLAW_HOST_CLAUDE_DIR: ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}
       DEVCLAW_CONTAINER_PATH_PREFIX: /var/lib/devclaw/workspaces
       DEVCLAW_HOST_PATH_PREFIX: ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}
+      # --- goal layer (folded-in goalclaw) ---
+      # Durable goals live under the vault; the goal heartbeat drives them and
+      # dispatches into this same process in-process (no HTTP MCP hop, no /wake).
+      DEVCLAW_GOALS_DIR: /srv/life/goals
+      DEVCLAW_GOAL_NOTIFY_URL: http://notify-relay:8090/text
+      DEVCLAW_GOAL_TICK_SECONDS: ${DEVCLAW_GOAL_TICK_SECONDS:-900}
+      DEVCLAW_GOAL_PLANNER_MODEL: ${DEVCLAW_GOAL_PLANNER_MODEL:-sonnet}
+      DEVCLAW_GOAL_EVAL_MODEL: ${DEVCLAW_GOAL_EVAL_MODEL:-sonnet}
+      DEVCLAW_GOAL_EVAL_EVERY: ${DEVCLAW_GOAL_EVAL_EVERY:-3}
+      DEVCLAW_GOAL_VERIFY_DONE: ${DEVCLAW_GOAL_VERIFY_DONE:-1}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Persistent state — survives container recreates.
       - devclaw-state:/var/lib/devclaw
+      # The vault — the goal layer reads/writes durable goal state under
+      # /srv/life/goals (folded-in goalclaw; same mount goalclaw used to have).
+      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/srv/life
       # Workspaces — shared between this container and the per-task
       # devclaw-sandbox containers it spawns. Bind-mounted from the host
       # so docker (running on the host) can bind-mount the same path into
