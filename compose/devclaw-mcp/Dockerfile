@@ -1,25 +1,27 @@
-# DevClaw v2 — MCP server container.
+# DevClaw — MCP server container (Python host).
 #
 # Build context: this directory (compose/devclaw-mcp/).
-# The container clones dsdevq/devclaw at build time (public repo) and builds
-# the v2/ TypeScript MCP server. Python OpenHands runner is set up in a
-# venv during build so the runtime stays cold-start fast.
+# Clones dsdevq/devclaw at build time (public repo) and pip-installs the Python
+# package. As of devclaw's 2026-05-31 rewrite (#49) the MCP host is all-Python
+# (FastMCP) — there is no v2/ TypeScript build anymore. The host's job:
+#   - serve the MCP tools (streamable-http),
+#   - run host-side cognition (planner / grill / judge) via `claude --print`,
+#   - spawn one devclaw-sandbox container per task via the host docker socket,
+#   - deliver a verified change as a branch + PR (git push + `gh pr create`).
+# The OpenHands agent AND the verify gate run INSIDE the sandbox, not here, so
+# this image carries NO openhands-sdk and NO language toolchains (e.g. .NET).
 #
-# Auth: inherits Claude Code OAuth from the gateway's bind-mounted
-# ~/.claude session — same model as openclaw-gateway. No API key, ever.
+# Auth: inherits Claude Code OAuth from the bind-mounted ~/.claude session (no
+# API key, ever); inherits git push + gh auth from the bind-mounted ~/.config/gh
+# + ~/.gitconfig (for PR delivery).
 
-# node:22-trixie (Debian 13) ships Python 3.13.5 by default. openhands-sdk
-# 1.23+ requires Python >= 3.12, so bookworm (Debian 12, Python 3.11) no
-# longer satisfies the venv install below. The previously-running image
-# was built when the bookworm tag still aliased to a 3.13-bearing variant;
-# after Debian 13 stabilised, that stopped being true and rebuilds began
-# failing with "openhands-sdk>=1.23.0 (from versions: none)".
+# node:22-trixie (Debian 13, Python 3.13) — node for the claude CLI + ACP bridge.
 FROM node:22-trixie
 
 # ---- system deps -----------------------------------------------------------
-# docker-ce-cli: needed for slice 5 — the MCP server spawns per-task
-# devclaw-sandbox containers via the host docker socket bind-mounted by
-# compose. We install ONLY the client; the daemon stays on the host.
+# docker-ce-cli: the MCP server spawns per-task devclaw-sandbox containers via
+#   the host docker socket bind-mounted by compose (daemon stays on the host).
+# gh: the GitHub CLI — devclaw's delivery step runs `gh pr create`.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 python3-venv python3-pip \
@@ -30,37 +32,34 @@ RUN apt-get update \
  && chmod a+r /etc/apt/keyrings/docker.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/debian trixie stable" > /etc/apt/sources.list.d/docker.list \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] \
+https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends docker-ce-cli \
+ && apt-get install -y --no-install-recommends docker-ce-cli gh \
  && rm -rf /var/lib/apt/lists/*
 
 # ---- claude CLI + ACP bridge (npm-installed globally) ---------------------
-# claude-code: the actual CLI binary whose OAuth session we inherit
-# claude-agent-acp: the ACP adapter the Python runner spawns
+# claude-code: the CLI binary whose OAuth session we inherit (host cognition).
+# claude-agent-acp: the ACP adapter (sandbox spawns it; kept here to match).
 RUN npm install -g \
       @anthropic-ai/claude-code \
       @agentclientprotocol/claude-agent-acp
 
-# ---- DevClaw v2 source -----------------------------------------------------
+# ---- DevClaw source (Python) ----------------------------------------------
 ARG DEVCLAW_REPO=https://github.com/dsdevq/devclaw.git
 ARG DEVCLAW_REF=main
-
 RUN git clone --depth 1 --branch "${DEVCLAW_REF}" "${DEVCLAW_REPO}" /app
-WORKDIR /app/v2
+WORKDIR /app
+# Install the host package (fastmcp + httpx + the `devclaw-mcp` console script).
+# Debian 13's Python is externally-managed; --break-system-packages installs the
+# small dep set system-wide, no venv needed for the lean host.
+RUN pip install --break-system-packages --no-cache-dir .
 
-# Use npm install instead of `npm ci` — the repo's package-lock.json may be
-# slightly behind for transient deps; install is more forgiving.
-RUN npm install --no-audit --no-fund \
- && npm run build
-
-# Python venv with openhands-sdk
-RUN python3 -m venv python-runner/.venv \
- && python-runner/.venv/bin/pip install --upgrade pip --quiet \
- && python-runner/.venv/bin/pip install --quiet -r python-runner/requirements.txt
-
-# ---- runtime config --------------------------------------------------------
-# State directory — mount a named volume here in compose so the SQLite db
-# survives container recreates.
+# State directory — a compose named volume mounts here so the SQLite db survives
+# recreates.
 RUN mkdir -p /var/lib/devclaw
 
 ENV DEVCLAW_TRANSPORT=http \
@@ -72,9 +71,7 @@ ENV DEVCLAW_TRANSPORT=http \
 
 EXPOSE 8000
 
-# Drop to a non-root user for the long-running process. The image's `node`
-# user owns /app already (npm install ran as root, but node owns /app
-# because that's the base image convention).
+# Drop to the base image's non-root `node` user for the long-running process.
 USER node
 
-CMD ["node", "dist/mcp-server.js"]
+CMD ["devclaw-mcp"]

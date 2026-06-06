@@ -421,6 +421,17 @@ services:
     # Placeholder command — service is never started via `up`.
     command: ["true"]
 
+  # Build-only — the .NET variant of the sandbox (FROMs devclaw-sandbox:local),
+  # for tasks on .NET repos (lifekit-dashboard). devclaw-mcp selects it via
+  # DEVCLAW_SANDBOX_IMAGE. Build AFTER devclaw-sandbox (it layers on it):
+  #   docker compose build devclaw-sandbox && docker compose build devclaw-sandbox-dotnet
+  devclaw-sandbox-dotnet:
+    profiles: ["build-only"]
+    build:
+      context: ./devclaw-sandbox-dotnet
+    image: devclaw-sandbox-dotnet:local
+    command: ["true"]
+
   devclaw-mcp:
     <<: *policy
     # DevClaw v2 — autonomous coding runtime exposed via streamable-http MCP.
@@ -464,7 +475,9 @@ services:
       #     at /var/lib/devclaw/workspaces/<id>, sandcastle-runner swaps the
       #     prefix for the host's view of the same bind-mount so the
       #     spawned sandbox container can actually see it.
-      DEVCLAW_SANDBOX_IMAGE: devclaw-sandbox:local
+      # .NET variant — the verify gate (`dotnet test`) runs INSIDE the sandbox,
+      # so the sandbox carries the toolchain. devclaw-dashboard tasks are .NET.
+      DEVCLAW_SANDBOX_IMAGE: devclaw-sandbox-dotnet:local
       DEVCLAW_HOST_CLAUDE_DIR: ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}
       DEVCLAW_CONTAINER_PATH_PREFIX: /var/lib/devclaw/workspaces
       DEVCLAW_HOST_PATH_PREFIX: ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}
@@ -486,6 +499,10 @@ services:
       # Inherit Claude Code OAuth from the same files the gateway uses.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # git push + gh auth for PR delivery (delivery.py: git push + `gh pr create`).
+      # Same creds the gateway's code-task path uses.
+      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
+      - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
     cap_drop:
       - NET_RAW
       - NET_ADMIN
