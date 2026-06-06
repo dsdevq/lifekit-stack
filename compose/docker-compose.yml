@@ -381,7 +381,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256m
+          # The plan step shells out to `claude --print` (node) — 256m OOM-kills
+          # it (SIGKILL -9) on larger prompts. Give it headroom like devclaw.
+          memory: 1g
     environment:
       GOALCLAW_GOALS_DIR: /srv/life/goals
       # devclaw-mcp is internal-only on the compose network, no auth token set.
