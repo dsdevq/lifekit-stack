@@ -1,23 +1,26 @@
 # goalclaw container — the goal-layer planner.
 #
-# Resident heartbeat (`goalclaw loop`): ticks every
-# GOALCLAW_TICK_INTERVAL_SECONDS, advances each durable goal under the vault's
-# goals/ dir, dispatches code actions to devclaw-mcp over HTTP MCP. Mirrors the
-# lifekit-curator container shape: node base for the bundled Claude CLI (the
-# plan step is `claude --print` over the bind-mounted Pro OAuth session), python
-# for goalclaw itself. No API key, ever.
+# `goalclaw serve`: heartbeat + a /wake event endpoint. Advances each durable
+# goal under the vault's goals/ dir; before each code action it prepares a
+# pristine workspace checkout (git), then dispatches to devclaw-mcp over MCP.
+# Cognition is the Claude Agent SDK on the bind-mounted Pro OAuth session (no API
+# key). git + gh are for workspace clone/fetch (private repos use gh auth).
 
 FROM node:22-bookworm-slim AS base
 
+# python + git (workspace prep) + gh (private-repo clone/fetch auth).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 \
-        python3-pip \
-        python3-venv \
-        git \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+        python3 python3-pip python3-venv \
+        git curl ca-certificates gnupg \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] \
+https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update && apt-get install -y --no-install-recommends gh \
+ && rm -rf /var/lib/apt/lists/*
 
-# Claude CLI — installed globally via npm (lands at /usr/local/bin/claude).
+# Claude CLI — the Agent SDK uses its bundled OAuth session at ~/.claude.
 RUN npm install -g @anthropic-ai/claude-code@latest
 
 # Install goalclaw from its public repo (code lives in its own repo, not vendored
@@ -36,7 +39,8 @@ USER lifekit
 ENV GOALCLAW_GOALS_DIR=/srv/life/goals \
     GOALCLAW_TICK_INTERVAL_SECONDS=900 \
     GOALCLAW_PLANNER_MODEL=sonnet \
+    GOALCLAW_WAKE_PORT=8500 \
     PYTHONUNBUFFERED=1
 
 # PID 1 / signal handling supplied by the compose-level `init: true` flag.
-CMD ["goalclaw", "loop"]
+CMD ["goalclaw", "serve"]
