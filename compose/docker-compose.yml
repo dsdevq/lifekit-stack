@@ -364,6 +364,47 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  goalclaw:
+    <<: *policy
+    # The goal-layer planner — drives durable goals across heartbeat ticks and
+    # dispatches code actions DOWN to devclaw-mcp over HTTP MCP. Resident loop
+    # (`goalclaw loop`); idle ticks cost ~0 tokens (cheap check gates the LLM).
+    # Goal state lives under the vault at /srv/life/goals. Clones its public
+    # repo at build time (code lives in its own repo, not vendored here).
+    build:
+      context: ./goalclaw
+      args:
+        GOALCLAW_REF: ${GOALCLAW_REF:-main}
+    image: goalclaw:local
+    depends_on:
+      - devclaw-mcp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    environment:
+      GOALCLAW_GOALS_DIR: /srv/life/goals
+      # devclaw-mcp is internal-only on the compose network, no auth token set.
+      DEVCLAW_URL: http://devclaw-mcp:8000/mcp
+      DEVCLAW_TOKEN: ${DEVCLAW_TOKEN:-}
+      # notify-relay's generic passthrough endpoint → Telegram.
+      GOALCLAW_NOTIFY_URL: http://notify-relay:8090/text
+      GOALCLAW_PLANNER_MODEL: ${GOALCLAW_PLANNER_MODEL:-sonnet}
+      GOALCLAW_TICK_INTERVAL_SECONDS: ${GOALCLAW_TICK_INTERVAL_SECONDS:-900}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      # The vault — goalclaw reads/writes only under /srv/life/goals.
+      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/srv/life
+      # Reuse the host user's Claude CLI session for the plan step — no API key.
+      # Both files: .claude.json carries oauthAccount → Pro session, not API billing.
+      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/lifekit/.claude
+      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/lifekit/.claude.json
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+
   # Build-only — devclaw-sandbox is never run as a long-lived service. It
   # publishes the devclaw-sandbox:local image that devclaw-mcp spawns one
   # container of per OpenHands task (via the host docker socket). Keep it

@@ -107,6 +107,37 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Generic passthrough — POST /text {text} sends the text verbatim to Telegram.
+  // Used by goalclaw (and any non-devclaw producer): the sender owns formatting,
+  // so messages aren't forced through devclaw's task-row template.
+  if (req.method === "POST" && req.url?.startsWith("/text")) {
+    let raw;
+    try {
+      raw = JSON.parse(await readBody(req));
+    } catch {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid json body" }));
+      return;
+    }
+    const text = String(raw?.text ?? "").slice(0, MAX_MSG_CHARS);
+    if (!text) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "missing 'text'" }));
+      return;
+    }
+    log(`POST /text (${text.length} chars)`);
+    try {
+      await sendTelegram(text);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      log(`/text send failed: ${err.message}`);
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   if (req.method !== "POST" || !req.url?.startsWith("/devclaw")) {
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "not found" }));
