@@ -4,10 +4,10 @@
 # Built once at deploy time, never run as a long-lived service. The
 # devclaw-mcp container references it by image tag (devclaw-sandbox:local).
 #
-# Source of truth is devclaw's own v2/.sandcastle/Dockerfile — we re-build
+# Source of truth is devclaw's own .sandcastle/Dockerfile — we re-build
 # it here so the image lands on the VPS without an external registry push.
 # The repo is cloned at build time at the same ref as devclaw-mcp so the
-# python-runner code matches the runner module the MCP server invokes.
+# openhands-runner code matches the runner module the MCP server invokes.
 
 ARG DEVCLAW_REF=main
 
@@ -37,7 +37,7 @@ RUN apt-get update \
  && groupadd --gid ${AGENT_GID} agent \
  && useradd  --uid ${AGENT_UID} --gid ${AGENT_GID} --create-home --shell /bin/bash agent
 
-COPY --from=source /src/v2/python-runner/requirements.txt /tmp/requirements.txt
+COPY --from=source /src/openhands-runner/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 RUN npm install -g \
@@ -45,7 +45,7 @@ RUN npm install -g \
       @agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION} \
  && npm cache clean --force
 
-COPY --from=source --chown=agent:agent /src/v2/python-runner/runner.py /opt/devclaw/runner.py
+COPY --from=source --chown=agent:agent /src/openhands-runner/runner.py /opt/devclaw/runner.py
 
 USER agent
 WORKDIR /workspace
