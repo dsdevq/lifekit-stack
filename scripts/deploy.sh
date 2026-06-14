@@ -148,7 +148,7 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
 # ─── Verify image runner.py matches upstream at DEVCLAW_REF ─────────────────
 #
 # Both devclaw-mcp and devclaw-sandbox clone DEVCLAW_REF and copy
-# v2/python-runner/runner.py in. After build, the runner.py inside each
+# openhands-runner/runner.py in. After build, the runner.py inside each
 # image MUST md5-match the file on github at the resolved SHA. That
 # catches TWO failure modes:
 #   (a) cross-image drift: BuildKit cached a stale clone layer in one of
@@ -161,10 +161,10 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
 # catches both at once.
 say "verifying runner.py matches dsdevq/devclaw@${DEVCLAW_REF_INPUT}"
 MCP_MD5=$(docker run --rm --entrypoint md5sum devclaw-mcp:local \
-  /app/v2/python-runner/runner.py | awk '{print $1}')
+  /app/openhands-runner/runner.py | awk '{print $1}')
 SBX_MD5=$(docker run --rm --entrypoint md5sum devclaw-sandbox:local \
   /opt/devclaw/runner.py | awk '{print $1}')
-UPSTREAM_URL="https://raw.githubusercontent.com/dsdevq/devclaw/${DEVCLAW_SHA}/v2/python-runner/runner.py"
+UPSTREAM_URL="https://raw.githubusercontent.com/dsdevq/devclaw/${DEVCLAW_SHA}/openhands-runner/runner.py"
 UPSTREAM_MD5=$(curl -fsS "${UPSTREAM_URL}" | md5sum | awk '{print $1}')
 if [[ -z "${UPSTREAM_MD5}" || "${UPSTREAM_MD5}" == "d41d8cd98f00b204e9800998ecf8427e" ]]; then
   echo "✗ could not fetch upstream runner.py from ${UPSTREAM_URL}" >&2
