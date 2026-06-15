@@ -5,7 +5,7 @@
 #   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations.
 #                          On-demand only (compose profile `cli`); not started by `docker compose up -d`.
 #                          Invoke via: `docker compose --profile cli run --rm openclaw-cli <command>`
-#   lifekit-curator      — queue-drain memory maintainer. RETIRED 2026-05-25 (pending v2 replacement). Profile-gated; not started by default.
+#   lifekit-curator      — queue-drain memory maintainer. RETIRED 2026-05-25; pending v2. Profile-gated; not started by default.
 #   lifekit-dashboard    — read-only web UI over ~/.life and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
 #   devclaw-mcp          — DevClaw v2 MCP server (autonomous coding via OpenHands); internal-only on :8000
