@@ -60,7 +60,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 3g
     environment:
       HOME: /home/node
       OPENCLAW_HOME: /home/node
