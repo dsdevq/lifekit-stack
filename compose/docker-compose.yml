@@ -459,6 +459,11 @@ services:
       # Inherit Claude Code OAuth from the same files the gateway uses.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # Goals dir — durable goal state (goal.yaml, STATUS.md, log.md, inbox.md,
+      # deliveries.md). Default DEVCLAW_GOALS_DIR=~/memory/goals resolves to
+      # /home/node/memory/goals inside the container; mount the host path here
+      # so goals survive container restarts and are readable by other services.
+      - ${LIFEKIT_LIFE_DIR:-/srv/life}/goals:/home/node/memory/goals
     cap_drop:
       - NET_RAW
       - NET_ADMIN
