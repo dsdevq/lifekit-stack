@@ -163,6 +163,59 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
 say "docker compose up -d --build"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
 
+# ─── Reattach openclaw-cli to new gateway network namespace ──────────────────
+#
+# openclaw-cli uses network_mode: service:openclaw-gateway. When only the
+# gateway's config or image changes, compose recreates the gateway container
+# but may leave the CLI container alive with a stale reference to the old
+# network namespace — so ws://127.0.0.1:18789 silently fails and openclaw
+# commands (cron runs, health checks) can't reach the gateway.
+#
+# Force-recreate whenever the CLI is running (--profile cli covers the
+# profile gate; the command is a no-op if the CLI container is stopped).
+say "reattaching openclaw-cli to new gateway network namespace"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+  --profile cli up -d --force-recreate openclaw-cli \
+  || echo "(openclaw-cli force-recreate skipped — not running)"
+
+# ─── Reset stuck agent sessions ───────────────────────────────────────────────
+#
+# Killing the gateway mid-conversation (every deploy) leaves agent sessions
+# as status=running. The next inbound message hits that session key, finds it
+# "running", and the gateway won't start a fresh conversation — so the agent
+# goes silent until the session is manually cleared. Reset any stuck sessions
+# immediately after the gateway starts so the first post-deploy message always
+# gets a clean session.
+say "resetting stuck agent sessions (running → aborted)"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T openclaw-gateway \
+  python3 -c "
+import json, glob, os, sys
+stores = glob.glob('/home/node/.openclaw/agents/*/sessions/sessions.json')
+total = 0
+for path in stores:
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        changed = 0
+        for key, val in data.items():
+            if isinstance(val, dict) and val.get('status') == 'running':
+                val['status'] = 'done'
+                val['abortedLastRun'] = True
+                changed += 1
+        if changed:
+            with open(path, 'w') as f:
+                json.dump(data, f, indent=2)
+            agent = os.path.basename(os.path.dirname(os.path.dirname(path)))
+            print(f'  {agent}: reset {changed} stuck session(s)')
+            total += changed
+    except Exception as e:
+        print(f'  warning: {path}: {e}', file=sys.stderr)
+if total == 0:
+    print('  no stuck sessions found')
+else:
+    print(f'  total: {total} session(s) reset')
+" || echo "(session reset reported issues — review above)"
+
 # ─── Verify image runner.py matches upstream at DEVCLAW_REF ─────────────────
 #
 # Both devclaw-mcp and devclaw-sandbox clone DEVCLAW_REF and copy
@@ -251,9 +304,13 @@ fi
 #   (add the entry from compose/health-claw/mcp-config.json to /srv/openclaw/config/openclaw.json)
 
 # ─── Health checks ───────────────────────────────────────────────────────────
+#
+# Wait 30s instead of 10s: Telegram channels have a 120s connect-grace period
+# but are typically connected within 15-20s. 30s gives them time to show as
+# "connected" in the channels status output so the deploy log is useful.
 
-say "Waiting 10s for services to settle"
-sleep 10
+say "Waiting 30s for services and Telegram channels to settle"
+sleep 30
 
 say "openclaw doctor"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
@@ -262,6 +319,10 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run -
 say "openclaw health"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
   health || echo "(health reported issues — review above)"
+
+say "openclaw channels status"
+docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run --rm -T openclaw-cli \
+  channels status || echo "(channels status reported issues — review above)"
 
 say "container status"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
