@@ -5,7 +5,7 @@
 #   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations.
 #                          On-demand only (compose profile `cli`); not started by `docker compose up -d`.
 #                          Invoke via: `docker compose --profile cli run --rm openclaw-cli <command>`
-#   lifekit-curator      — queue-drain memory maintainer; defensive parsing with dead-letter quarantine
+#   lifekit-curator      — queue-drain memory maintainer. RETIRED 2026-05-25 (pending v2 replacement). Profile-gated; not started by default.
 #   lifekit-dashboard    — read-only web UI over ~/.life and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
 #   devclaw-mcp          — DevClaw v2 MCP server (autonomous coding via OpenHands); internal-only on :8000
@@ -200,11 +200,10 @@ services:
 
   lifekit-orchestrator:
     <<: *policy
-    # Long-running scheduler replacing the OpenClaw cron entries
-    # `task_dispatch_15m` and `curator_30m`. Runs in its own container so
-    # every sweep + supervise tick is pure Python (mechanism), without
-    # spawning a Claude subagent per tick. Image is reused from openclaw
-    # because the orchestrator's cognition nodes shell out to `claude --print`.
+    # RETIRED 2026-05-25 (v1 LangGraph scheduler). Replaced by devclaw-mcp's in-process queue.
+    # Profile-gated so `docker compose up -d` never starts it.
+    profiles:
+      - orchestrator-v1
     image: lifekit-openclaw:local
     deploy:
       resources:
@@ -338,6 +337,11 @@ services:
 
   lifekit-curator:
     <<: *policy
+    # RETIRED 2026-05-25. Stopped pending v2 replacement (OpenClaw voice-idea-capture +
+    # re-implemented curator). Profile-gated so `docker compose up -d` never starts it.
+    # Invoke explicitly: docker compose --profile curator up -d lifekit-curator
+    profiles:
+      - curator
     build:
       context: ./curator
     image: lifekit-curator:local
