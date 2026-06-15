@@ -21,7 +21,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ## Services
 
-[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines six services — five long-lived plus `openclaw-cli`, which is gated behind the `cli` compose profile and only started on demand. All inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines seven always-on services plus `openclaw-cli` (gated behind the `cli` compose profile, on-demand only) and `devclaw-sandbox` (build-only image, never run as a daemon). All always-on services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
 
 | Service | Image | Role |
 | --- | --- | --- |
@@ -30,6 +30,8 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `lifekit-orchestrator` | `lifekit-openclaw:local` | Long-running Python scheduler (`devclaw-orchestrator daemon`) that replaced the OpenClaw cron entries `task_dispatch_15m` and `curator_30m`. Editable-installed from the bind-mounted source on every container start to undo `pip install -e .` hijacks from code-task runners. |
 | `lifekit-curator` | `lifekit-curator:local` (built from `compose/curator/`) | Drains `~/.life/queue.jsonl` and updates domain files via Claude. See [Curator dead-letter behavior](#curator-dead-letter-behavior). |
 | `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
+| `devclaw-mcp` | `devclaw-mcp:local` (built from `compose/devclaw-mcp/`) | DevClaw v2 autonomous coding runtime, exposed via streamable-http MCP. Spawns one `devclaw-sandbox` container per task via the host Docker socket. Internal-only. |
+| `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | Translates DevClaw's `notify_url` POST into a Telegram message via direct Bot API call. Internal-only on `:8090`. |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
 ### Uniform service policy

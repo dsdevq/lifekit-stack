@@ -42,3 +42,12 @@ repos:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: check-doc-drift
+        name: README <-> compose service-count parity
+        entry: scripts/check-doc-drift.sh
+        language: script
+        pass_filenames: false
+        files: ^(README\.md|compose/docker-compose\.yml)$
