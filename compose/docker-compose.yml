@@ -2,7 +2,9 @@
 #
 # Services:
 #   openclaw-gateway     — the runtime gateway (channels, cron, skills, agent); loopback bind on 18789
-#   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations
+#   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations.
+#                          On-demand only (compose profile `cli`); not started by `docker compose up -d`.
+#                          Invoke via: `docker compose --profile cli run --rm openclaw-cli <command>`
 #   lifekit-curator      — queue-drain memory maintainer; defensive parsing with dead-letter quarantine
 #   lifekit-dashboard    — read-only web UI over ~/.life and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
@@ -147,6 +149,11 @@ services:
 
   openclaw-cli:
     <<: *policy
+    # On-demand only — not started by `docker compose up -d`. Invoke via:
+    #   docker compose --profile cli run --rm openclaw-cli <command>   (preferred)
+    #   docker compose --profile cli up -d openclaw-cli                (persistent session)
+    profiles:
+      - cli
     image: lifekit-openclaw:local
     network_mode: "service:openclaw-gateway"
     depends_on:

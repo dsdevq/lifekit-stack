@@ -22,8 +22,8 @@ ssh <your-vps-tailscale-name>
 cd /srv/lifekit-stack
 git pull
 docker compose -f compose/docker-compose.yml -f compose/docker-compose.extra.yml up -d --build
-docker compose exec -T openclaw-cli openclaw doctor
-docker compose exec -T openclaw-cli openclaw health
+docker compose --profile cli run --rm -T openclaw-cli openclaw doctor
+docker compose --profile cli run --rm -T openclaw-cli openclaw health
 ```
 
 ## Rolling back
@@ -80,8 +80,8 @@ Symptom: your bot stops responding, no errors visible.
 ssh <your-vps-tailscale-name>
 cd /srv/lifekit-stack
 docker compose logs -f openclaw-gateway --tail 100
-docker compose exec -T openclaw-cli openclaw doctor
-docker compose exec -T openclaw-cli openclaw channels list
+docker compose --profile cli run --rm -T openclaw-cli openclaw doctor
+docker compose --profile cli run --rm -T openclaw-cli openclaw channels list
 ```
 
 Common causes:
@@ -89,7 +89,7 @@ Common causes:
 1. **Telegram token rotated** — check `/srv/openclaw/config/.env` against your BotFather token. Update + restart.
 2. **Polling stalled** — `docker compose restart openclaw-gateway`.
 3. **OpenClaw OOM** — `dmesg | grep -i oom`. If yes, scale up the VPS.
-4. **Anthropic auth expired** — `docker compose exec openclaw-cli claude auth status`. Re-login if needed.
+4. **Anthropic auth expired** — `docker compose --profile cli run --rm openclaw-cli claude auth status`. Re-login if needed.
 
 ## When a skill says "command not found" or "sharp: missing native binary"
 
@@ -183,8 +183,8 @@ Total recovery time: ~30 minutes if your backups are current.
 After every deploy, the wizard runs:
 
 ```bash
-docker compose exec -T openclaw-cli openclaw doctor
-docker compose exec -T openclaw-cli openclaw health
+docker compose --profile cli run --rm -T openclaw-cli openclaw doctor
+docker compose --profile cli run --rm -T openclaw-cli openclaw health
 # Plus a synthetic Telegram self-message round-trip
 ```
 
