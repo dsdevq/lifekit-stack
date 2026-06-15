@@ -11,6 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# inotify_simple powers the event-driven queue watcher in the lifekit curator daemon.
+# --break-system-packages is required on Debian Bookworm's PEP-668 marker;
+# the curator container is single-purpose, so installing into the system
+# site-packages is intentional.
+RUN pip3 install --no-cache-dir --break-system-packages inotify_simple==1.3.5
+
 # Claude CLI — installed globally via npm
 RUN npm install -g @anthropic-ai/claude-code@latest
 
@@ -26,7 +32,8 @@ RUN groupmod --new-name lifekit node \
 USER lifekit
 
 ENV LIFEKIT_ROOT=/srv/life \
-    LIFEKIT_WAKE_INTERVAL_SECONDS=900 \
+    LIFEKIT_WATCHDOG_INTERVAL_SECONDS=3600 \
+    LIFEKIT_QUEUE_WATCH_DEBOUNCE_MS=200 \
     LIFEKIT_LOG_LEVEL=INFO \
     PYTHONUNBUFFERED=1
 
