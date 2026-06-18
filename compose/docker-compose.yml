@@ -442,6 +442,15 @@ services:
       DEVCLAW_CONTAINER_PATH_PREFIX: /var/lib/devclaw/workspaces
       DEVCLAW_HOST_PATH_PREFIX: ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}
       TZ: ${OPENCLAW_TZ:-UTC}
+      # Wire git's credential helper to gh via env (same pattern as the
+      # gateway). The goal layer clones repos orchestrator-side as `node`
+      # (devclaw/workspace.py); without this, `git clone` of a PRIVATE repo
+      # prompts for a username with no TTY and dies with
+      # "could not read Username for 'https://github.com': No such device".
+      # gh is installed in the image; this points git at gh's stored token.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.helper
+      GIT_CONFIG_VALUE_0: "!gh auth git-credential"
     volumes:
       # Persistent state — survives container recreates.
       - devclaw-state:/var/lib/devclaw
@@ -459,6 +468,12 @@ services:
       # Inherit Claude Code OAuth from the same files the gateway uses.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # gh CLI auth so the goal layer can clone PRIVATE repos and open PRs.
+      # Same host creds the gateway uses (`gh auth login` as lifekit). Pairs
+      # with the GIT_CONFIG_* credential-helper env above.
+      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
+      # Host gitconfig (user.name/email) so delivery commits get the right author.
+      - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
       # Goals dir — durable goal state (goal.yaml, STATUS.md, log.md, inbox.md,
       # deliveries.md). Default DEVCLAW_GOALS_DIR=~/memory/goals resolves to
       # /home/node/memory/goals inside the container; mount the host path here
