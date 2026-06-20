@@ -7,7 +7,7 @@
 #   /srv/lifekit-stack/                  ← cloned by bootstrap-vps.sh
 #   /srv/openclaw/config/.env            ← scp'd from your laptop (see .env.example)
 #   /srv/openclaw/workspace/skills/      ← rsync'd from your laptop's ~/.openclaw/workspace/skills/
-#   /srv/life/                           ← rsync'd from your laptop's ~/.life/
+#   /srv/memory/                           ← rsync'd from your laptop's ~/memory/
 #   /home/lifekit/.claude/               ← either logged in on the VPS via `claude auth login`,
 #                                          or rsync'd from your laptop's ~/.claude/
 #
@@ -100,14 +100,14 @@ else
     "https://x-access-token:${TOKEN}@github.com/dsdevq/lifekit-dashboard.git"
 fi
 
-# ─── modules.yaml → /srv/life/system/ ───────────────────────────────────────
+# ─── modules.yaml → /srv/memory/system/ ───────────────────────────────────────
 
-LIFE_DIR="${LIFEKIT_LIFE_DIR:-/srv/life}"
+LIFE_DIR="${LIFEKIT_LIFE_DIR:-/srv/memory}"
 say "syncing config/modules.yaml → ${LIFE_DIR}/system/modules.yaml"
 mkdir -p "${LIFE_DIR}/system"
 cp "${REPO_DIR}/defaults/modules.yaml" "${LIFE_DIR}/system/modules.yaml"
 
-# Runtime-state dir — split from /srv/life per proposal
+# Runtime-state dir — split from /srv/memory per proposal
 # 2026-05-27-runtime-knowledge-split. Idempotent guard so an in-place upgrade
 # (without a fresh bootstrap-vps.sh run) still ends up with the dirs the compose
 # bind-mounts expect.
