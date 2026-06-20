@@ -6,7 +6,7 @@
 #                          On-demand only (compose profile `cli`); not started by `docker compose up -d`.
 #                          Invoke via: `docker compose --profile cli run --rm openclaw-cli <command>`
 #   lifekit-curator      — queue-drain memory maintainer. RETIRED 2026-05-25; pending v2. Profile-gated; not started by default.
-#   lifekit-dashboard    — read-only web UI over ~/.life and ~/.openclaw/workspace; loopback bind on 18790
+#   lifekit-dashboard    — read-only web UI over ~/memory and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
 #   devclaw-mcp          — DevClaw v2 MCP server (autonomous coding via OpenHands); internal-only on :8000
 #   notify-relay         — turns devclaw's notify_url POST into a Telegram message via the gateway CLI; internal-only on :8090
@@ -33,7 +33,7 @@
 # memory cap) is defined in the x-policy anchor below and merged into every
 # long-lived service via `<<: *policy`. Individual services override the memory
 # cap in their own `deploy.resources.limits.memory` block where needed.
-# Rationale: see ~/.life/incidents/2026-05-20-vps-freeze.md — the full postmortem
+# Rationale: see ~/memory/incidents/2026-05-20-vps-freeze.md — the full postmortem
 # for the VPS freeze that motivated this hardening pass.
 ---
 x-policy:
@@ -81,13 +81,12 @@ services:
       - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
-      # ~/.life/ is bind-mounted in so OpenClaw skills can read/write it.
-      # The container-side path matches what skills expect.
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
-      # ~/.life-state/ holds orchestrator runtime state — queue.jsonl,
-      # .curator-proposed/, flat-bucket tasks/, intake_index.json,
-      # orchestrator.sqlite. Split from the knowledge layer per
-      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
+      # Vault (~/memory): bind-mounted at two paths.
+      # ~/memory — canonical alias used by cron jobs, skills, and agents.
+      # ~/.openclaw/wiki/main — direct real bind mount (replaces symlink) so
+      # OpenClaw wiki tools can traverse it without hitting the symlink guard.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
       # Claude CLI session creds so the agent harness can authenticate to Anthropic.
       # Both the dir (.claude/) and the sibling .claude.json file are required —
@@ -101,6 +100,15 @@ services:
       - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
       # Host gitconfig (user.name/email) so commits land with the right author.
       - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
+      # workout-claw CLI: prebuilt host checkout, installed -g at container
+      # start (entrypoint). Sourced from the host clone rather than npm/GitHub
+      # because the package was never published to npm and the GitHub repo is
+      # archived (read-only). Keep /srv/workout-claw built (`npm run build`).
+      - ${LIFEKIT_WORKOUT_CLAW_DIR:-/srv/workout-claw}:/opt/workout-claw:ro
+      # workout-claw data store. The CLI hardcodes $HOME/.workout-claw
+      # (src/lib/storage.ts); map it to the same logs dir under ~/.life so
+      # sessions persist and match the host/PC layout.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/state/workout-claw:/home/node/.workout-claw
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -125,6 +133,9 @@ services:
         fi
         if ! command -v summarize >/dev/null 2>&1; then
           npm install -g @steipete/summarize 2>&1 | tail -3
+        fi
+        if ! command -v workout-claw >/dev/null 2>&1; then
+          npm install -g /opt/workout-claw 2>&1 | tail -3
         fi
         exec "$$@"
       - --
@@ -187,7 +198,8 @@ services:
       - ${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       - ${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-/srv/openclaw/secret-key}:/home/node/.config/openclaw
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/.openclaw/wiki/main
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
     cap_drop:
       - NET_RAW
@@ -231,8 +243,8 @@ services:
       # Orchestrator source — installed editable at container start.
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/home/node/.openclaw/workspace
       # ~/.life is the knowledge layer the daemon reads project specs from.
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/home/node/.life
-      # ~/.life-state is the runtime state the daemon owns — orchestrator.sqlite,
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
+      # /.life-state is the runtime state the daemon owns — orchestrator.sqlite,
       # flat-bucket tasks/, intake_index.json. Split from the knowledge layer per
       # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/home/node/.life-state
@@ -280,7 +292,7 @@ services:
       - devclaw-orchestrator
       - daemon
       - --life
-      - /home/node/.life
+      - /home/node/memory
       - --telegram-chat
       - ${LIFEKIT_TELEGRAM_CHAT:-default}
     healthcheck:
@@ -314,7 +326,7 @@ services:
       LIFEKIT_STATE_DIR: /life-state
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/life:ro
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/life:ro
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/life-state:ro
       - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/openclaw-workspace:ro
     cap_drop:
@@ -350,7 +362,7 @@ services:
         limits:
           memory: 256m
     environment:
-      LIFEKIT_ROOT: /srv/life
+      LIFEKIT_ROOT: /srv/memory
       # Runtime state moved out of the knowledge layer per
       # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
       # The curator reads queue.jsonl from the state mount and tracks the
@@ -366,7 +378,7 @@ services:
       LIFEKIT_LOG_LEVEL: ${LIFEKIT_LOG_LEVEL:-INFO}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}:/srv/life
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/srv/memory
       - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/srv/lifekit-state
       # Reuse the host user's Claude CLI session — no API key needed.
       # The path inside the container is /home/lifekit because we renamed
