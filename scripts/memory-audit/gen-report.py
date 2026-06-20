@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """Assemble the dated vault-audit report from Pass-1 (plugin digest/reports)
 and Pass-2 (contract-lint JSON). Lives in lifekit-stack; called by the weekly cron."""
-import json, os, sys, datetime, collections, re
+
+import json
+import os
+import sys
+import datetime
+import collections
+import re
+
 VAULT = sys.argv[1] if len(sys.argv) > 1 else "/srv/memory"
-LINT  = sys.argv[2] if len(sys.argv) > 2 else "/tmp/lint-out.json"
-DATE  = sys.argv[3] if len(sys.argv) > 3 else datetime.date.today().isoformat()
+LINT = sys.argv[2] if len(sys.argv) > 2 else "/tmp/lint-out.json"
+DATE = sys.argv[3] if len(sys.argv) > 3 else datetime.date.today().isoformat()
 FIXES = sys.argv[4] if len(sys.argv) > 4 else None
 autofixes = []
 if FIXES and os.path.exists(FIXES):
-    try: autofixes = json.load(open(FIXES))
-    except Exception: autofixes = []
+    try:
+        autofixes = json.load(open(FIXES))
+    except Exception:
+        autofixes = []
 
 digest = json.load(open(f"{VAULT}/.openclaw-wiki/cache/agent-digest.json"))
 ch = digest.get("claimHealth", {})
@@ -24,7 +33,7 @@ def report_line(name):
     body = open(p).read()
     m = re.search(r":start -->(.*?)<!--", body, re.S)
     txt = (m.group(1) if m else body).strip().splitlines()
-    return " ".join(l.strip("- ").strip() for l in txt if l.strip())[:240] or "clean"
+    return " ".join(ln.strip("- ").strip() for ln in txt if ln.strip())[:240] or "clean"
 
 
 lint = json.load(open(LINT))
@@ -56,13 +65,16 @@ out.append(f"updatedAt: {DATE}T00:00:00Z")
 out.append("tags: [audit, vault, generated]")
 out.append("---\n")
 out.append(f"# Vault Audit — {DATE}\n")
-out.append("Two passes: plugin compile (typed layer) + contract-lint (structural layer). Each check maps to a "
-           "rule in [[README]]. Safe mechanical fixes are auto-applied; judgment-needed findings are left below "
-           "for you. Nothing is ever auto-deleted.\n")
+out.append(
+    "Two passes: plugin compile (typed layer) + contract-lint (structural layer). Each check maps to a "
+    "rule in [[README]]. Safe mechanical fixes are auto-applied; judgment-needed findings are left below "
+    "for you. Nothing is ever auto-deleted.\n"
+)
 
 # Auto-fix section (what the agent handled this run)
 if autofixes:
     import collections as _c
+
     fc = _c.Counter(x["action"] for x in autofixes)
     out.append(f"## Auto-fixed this run ({len(autofixes)})\n")
     out.append(" · ".join(f"{k}: {v}" for k, v in fc.most_common()) + "\n")
@@ -75,23 +87,38 @@ else:
     out.append("## Auto-fixed this run (0)\n\nNothing mechanically fixable this run.\n")
 
 out.append("## Pass 1 — plugin layer (`openclaw wiki compile`)\n")
-out.append(f"- Typed pages: source {pc.get('source', 0)}, entity {pc.get('entity', 0)}, "
-           f"concept {pc.get('concept', 0)}, synthesis {pc.get('synthesis', 0)}, report {pc.get('report', 0)}")
-out.append(f"- Claims: **{digest.get('claimCount', 0)}** — fresh {fr.get('fresh', 0)} / aging {fr.get('aging', 0)} "
-           f"/ stale {fr.get('stale', 0)} / unknown {fr.get('unknown', 0)}; "
-           f"missing-evidence {ch.get('missingEvidence', 0)}; contested {ch.get('contested', 0)}; "
-           f"low-confidence {ch.get('lowConfidence', 0)}")
+out.append(
+    f"- Typed pages: source {pc.get('source', 0)}, entity {pc.get('entity', 0)}, "
+    f"concept {pc.get('concept', 0)}, synthesis {pc.get('synthesis', 0)}, report {pc.get('report', 0)}"
+)
+out.append(
+    f"- Claims: **{digest.get('claimCount', 0)}** — fresh {fr.get('fresh', 0)} / aging {fr.get('aging', 0)} "
+    f"/ stale {fr.get('stale', 0)} / unknown {fr.get('unknown', 0)}; "
+    f"missing-evidence {ch.get('missingEvidence', 0)}; contested {ch.get('contested', 0)}; "
+    f"low-confidence {ch.get('lowConfidence', 0)}"
+)
 out.append("")
 out.append("| Report | Result |")
 out.append("|---|---|")
-for r in ["stale-pages", "provenance-coverage", "claim-health", "contradictions", "low-confidence",
-          "open-questions", "privacy-review", "relationship-graph", "person-agent-directory"]:
+for r in [
+    "stale-pages",
+    "provenance-coverage",
+    "claim-health",
+    "contradictions",
+    "low-confidence",
+    "open-questions",
+    "privacy-review",
+    "relationship-graph",
+    "person-agent-directory",
+]:
     out.append(f"| {r} | {report_line(r)} |")
 out.append("")
 
 out.append("## Pass 2 — structural contract-lint\n")
-out.append(f"Findings: **{len(lint)}** — high {sev.get('high', 0)}, medium {sev.get('medium', 0)}, "
-           f"low {sev.get('low', 0)}, info {sev.get('info', 0)}.\n")
+out.append(
+    f"Findings: **{len(lint)}** — high {sev.get('high', 0)}, medium {sev.get('medium', 0)}, "
+    f"low {sev.get('low', 0)}, info {sev.get('info', 0)}.\n"
+)
 for rule, items in by_rule.items():
     out.append(f"### {rule} ({len(items)}) — {RULEDOC.get(rule, '')}")
     for f in items[:30]:
@@ -101,10 +128,16 @@ for rule, items in by_rule.items():
     out.append("")
 
 out.append("## Triage notes\n")
-out.append("- **system/ frontmatter backlog** (most of `missing-frontmatter`): the `system/` folder predates "
-           "the frontmatter convention. Batch-add `name/summary/updatedAt/status`.")
-out.append("- **workspace-memory-ref** (info): `system/proposals.md` cites Kit workspace-memory slugs "
-           "(`feedback-*`, `user-*`) as `[[links]]`. Decide per-slug: promote durable rules into `concepts/`, "
-           "or drop the brackets. Not a weekly action item.")
-out.append("- **malformed-frontmatter** (high): quote the `summary:`/`next:` scalars that contain colons.")
+out.append(
+    "- **system/ frontmatter backlog** (most of `missing-frontmatter`): the `system/` folder predates "
+    "the frontmatter convention. Batch-add `name/summary/updatedAt/status`."
+)
+out.append(
+    "- **workspace-memory-ref** (info): `system/proposals.md` cites Kit workspace-memory slugs "
+    "(`feedback-*`, `user-*`) as `[[links]]`. Decide per-slug: promote durable rules into `concepts/`, "
+    "or drop the brackets. Not a weekly action item."
+)
+out.append(
+    "- **malformed-frontmatter** (high): quote the `summary:`/`next:` scalars that contain colons."
+)
 print("\n".join(out))
