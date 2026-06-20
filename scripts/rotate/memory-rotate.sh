@@ -3,7 +3,7 @@
 # (markdown archival + trajectory gzip/prune + footprint report + heartbeat). NO LLM.
 # Runtime state -> /var/lib/lifekit/rotation (per runtime-knowledge-split).
 set -euo pipefail
-ROOT=/srv/life
+ROOT=/srv/memory
 STATE=/var/lib/lifekit/rotation
 AGENTS=/srv/openclaw/config/agents
 /usr/sbin/logrotate --state "$STATE/logrotate.state" "$ROOT/system/logrotate-memory.conf"
