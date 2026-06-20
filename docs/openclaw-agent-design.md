@@ -105,7 +105,7 @@ Two memory layers coexist:
 | Layer | Location | Owner | Purpose |
 |---|---|---|---|
 | OpenClaw workspace memory | `<workspace>/MEMORY.md` + `<workspace>/memory/YYYY-MM-DD.md` | Kit | Long-term curated facts + daily working notes |
-| lifekit domain files | `~/.life/domains/<domain>.md` | lifekit-curator | Curated knowledge extracted from conversations |
+| lifekit domain files | `~/memory/domains/<domain>.md` | lifekit-curator _(retired 2026-05-25)_ | Curated knowledge extracted from conversations |
 
 Kit reads from both. The curator writes to `~/.life/domains/` independently of OpenClaw's session lifecycle.
 

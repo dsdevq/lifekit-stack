@@ -5,8 +5,7 @@
 `lifekit-stack` is a starter-template that deploys a complete personal-AI environment to a fresh VPS in under 15 minutes:
 
 - **[OpenClaw](https://openclaw.ai/)** — the runtime gateway (the `RuntimeGateway` adapter port). Chat bot, voice, scheduled briefs, conversational agent, workspace skills.
-- **[lifekit](https://github.com/dsdevq/lifekit)** — the Python framework that owns your `~/.life/` knowledge layer, the wizard, and the curator that maintains your domain files.
-- **`lifekit-curator`** — sibling container drains `queue.jsonl` and updates your domain files in the background.
+- **[lifekit](https://github.com/dsdevq/lifekit)** — the Python framework that owns your `~/.life/` knowledge layer and the wizard.
 - **Workspace skills** — opt-in skills bundled with this template (morning brief, learning coach, brainstorm, calendar/gmail integration, and more — see [`skills/`](./skills/)).
 - **Docker Compose + a single bash bootstrap script** — infrastructure-as-code. Reproducible from `git clone`.
 - **Mesh-VPN + loopback-only** — no public ingress, no domain, no TLS to manage. Outbound long-polling only.
@@ -28,7 +27,6 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `openclaw-gateway` | `lifekit-openclaw:local` (built from `compose/openclaw-gateway/`) | Runtime gateway — channels, cron, skills, agent. Loopback bind on `127.0.0.1:18789`. |
 | `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
 | `lifekit-orchestrator` | `lifekit-openclaw:local` | Long-running Python scheduler (`devclaw-orchestrator daemon`) that replaced the OpenClaw cron entries `task_dispatch_15m` and `curator_30m`. Editable-installed from the bind-mounted source on every container start to undo `pip install -e .` hijacks from code-task runners. |
-| `lifekit-curator` | `lifekit-curator:local` (built from `compose/curator/`) | Drains `~/.life/queue.jsonl` and updates domain files via Claude. See [Curator dead-letter behavior](#curator-dead-letter-behavior). |
 | `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
 | `devclaw-mcp` | `devclaw-mcp:local` (built from `compose/devclaw-mcp/`) | DevClaw v2 autonomous coding runtime, exposed via streamable-http MCP. Spawns one `devclaw-sandbox` container per task via the host Docker socket. Internal-only. |
 | `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | Translates DevClaw's `notify_url` POST into a Telegram message via direct Bot API call. Internal-only on `:8090`. |
@@ -41,13 +39,9 @@ Every service merges the `x-policy` anchor at the top of `compose/docker-compose
 - `init: true`
 - `restart: on-failure:5` — restart loop circuit-breaker; gives up after 5 consecutive failures instead of pinning a CPU forever.
 - `logging.driver: json-file` with `max-size: 50m` and `max-file: 3` — caps each service's on-disk log footprint at ~150MB.
-- `deploy.resources.limits.memory: 1g` — per-service ceiling. Individual services override (gateway 2g, dashboard/openclaw-cli/orchestrator/google-mcp 512m, curator 256m).
+- `deploy.resources.limits.memory: 1g` — per-service ceiling. Individual services override (gateway 2g, dashboard/openclaw-cli/orchestrator/google-mcp 512m).
 
 Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded log + no memory cap on a runaway agent loop ate the disk and pinned RAM until the host froze. The host also gained a **2 GB `/swapfile`** as a second line of defense; `scripts/bootstrap-vps.sh` provisions it.
-
-### Curator dead-letter behavior
-
-The curator parses every line of `~/.life/queue.jsonl` defensively. Any entry that fails JSON parse, schema validation, or domain dispatch is **quarantined** to `~/.life/queue.dead-letter.jsonl` (overridable via `LIFEKIT_DEAD_LETTER_FILE`) and skipped — a single poison entry will never wedge the curator. Landed in PR #19.
 
 ### Dashboard read-only guard
 
@@ -78,10 +72,10 @@ If you want app-level logs, `docker compose logs <service>` is still the path �
                   │   └────┬─────────────────────┬──────┘ │
                   │        │ reads/writes        │ calls   │
                   │        ▼                     ▼         │
-                  │   ┌──────────┐    ┌──────────────────┐ │
-                  │   │ ~/.life/ │    │ lifekit-curator  │ │
-                  │   │ (data)   │◄───┤ drains queue.jsonl│ │
-                  │   └──────────┘    └──────────────────┘ │
+                  │   ┌──────────┐                         │
+                  │   │ ~/memory/│                         │
+                  │   │ (data)   │                         │
+                  │   └──────────┘                         │
                   └───────────────────────────────────────┘
                            ▲
                            │ SSHFS over mesh VPN
@@ -129,7 +123,7 @@ Full walkthrough: [`docs/quickstart.md`](./docs/quickstart.md).
 
 ```
 lifekit-stack/
-├── compose/              # docker-compose.yml, Dockerfiles, OpenClaw + curator sources
+├── compose/              # docker-compose.yml, Dockerfiles, OpenClaw sources
 ├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw, redeploy/ (systemd units)
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
 ├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills
