@@ -392,6 +392,15 @@ services:
       DEVCLAW_PORT: "8000"
       DEVCLAW_DB: /var/lib/devclaw/devclaw.db
       DEVCLAW_GOALS_DIR: /var/lib/devclaw/goals
+      # Goal-layer milestone notifications → notify-relay's plain-text passthrough
+      # → the devclaw Telegram channel. Without this the goal layer uses a
+      # NullNotifier (silent), so kickoff→milestone pings never reach you.
+      DEVCLAW_GOAL_NOTIFY_URL: http://notify-relay:8090/text
+      # Notification altitude: 'owner' (default) sends only owner-facing events
+      # (blocker / paused-for-review / direction question / verified completion).
+      # 'task' is the full firehose (every dispatch + self-correction) — set
+      # during dogfooding to watch a run closely; revert to 'owner' for normal use.
+      DEVCLAW_NOTIFY_ALTITUDE: ${DEVCLAW_NOTIFY_ALTITUDE:-task}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
       OPENHANDS_SUPPRESS_BANNER: "1"
@@ -489,8 +498,13 @@ services:
           memory: 128m
     environment:
       NOTIFY_RELAY_PORT: "8090"
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      LIFEKIT_TELEGRAM_CHAT: ${LIFEKIT_TELEGRAM_CHAT:-}
+      # notify-relay is devclaw's ONLY outbound voice, so it speaks through the
+      # dedicated devclaw bot into the devclaw channel — NOT the main Kit bot.
+      # (The inbound side, /goals/answer, is already on the devclaw bot; this
+      # fixes the outbound asymmetry.) Falls back to the main bot/chat if the
+      # devclaw-specific vars are unset.
+      TELEGRAM_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}
+      LIFEKIT_TELEGRAM_CHAT: ${DEVCLAW_CHAT:-${LIFEKIT_TELEGRAM_CHAT:-}}
       TZ: ${OPENCLAW_TZ:-UTC}
     cap_drop:
       - NET_RAW

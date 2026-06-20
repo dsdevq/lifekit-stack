@@ -107,6 +107,48 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // POST /text — plain-text passthrough for the devclaw GOAL layer. Unlike
+  // /devclaw (which formats a task-row payload), the goal layer (goal_notify.py)
+  // has already composed the owner-facing message, so we send body.text verbatim.
+  if (req.method === "POST" && req.url === "/text") {
+    let raw;
+    try {
+      raw = await readBody(req);
+    } catch (err) {
+      log(`/text read-body error: ${err.message}`);
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "could not read body" }));
+      return;
+    }
+    let text;
+    try {
+      text = String(JSON.parse(raw)?.text ?? "").trim();
+    } catch {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid json body" }));
+      return;
+    }
+    if (!text) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "missing 'text'" }));
+      return;
+    }
+    if (text.length > MAX_MSG_CHARS) {
+      text = text.slice(0, MAX_MSG_CHARS - 14) + "\n… [truncated]";
+    }
+    try {
+      const result = await sendTelegram(text);
+      log(`/text delivered message_id=${result?.message_id ?? "?"}`);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      log(`/text send failed: ${err.message}`);
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   if (req.method !== "POST" || !req.url?.startsWith("/devclaw")) {
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "not found" }));
