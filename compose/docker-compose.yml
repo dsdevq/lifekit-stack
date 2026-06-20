@@ -435,6 +435,7 @@ services:
       DEVCLAW_TRANSPORT: http
       DEVCLAW_PORT: "8000"
       DEVCLAW_DB: /var/lib/devclaw/devclaw.db
+      DEVCLAW_GOALS_DIR: /var/lib/devclaw/goals
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
       OPENHANDS_SUPPRESS_BANNER: "1"
@@ -486,11 +487,10 @@ services:
       - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
       # Host gitconfig (user.name/email) so delivery commits get the right author.
       - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
-      # Goals dir — durable goal state (goal.yaml, STATUS.md, log.md, inbox.md,
-      # deliveries.md). Default DEVCLAW_GOALS_DIR=~/memory/goals resolves to
-      # /home/node/memory/goals inside the container; mount the host path here
-      # so goals survive container restarts and are readable by other services.
-      - ${LIFEKIT_LIFE_DIR:-/srv/life}/goals:/home/node/memory/goals
+      # Goals dir — durable goal state lives in the persisted devclaw-state
+      # volume (DEVCLAW_GOALS_DIR=/var/lib/devclaw/goals), NOT the vault.
+      # Decoupled 2026-06-20 (goalclaw abandoned) so goal runtime state never
+      # lands in the git-synced ~/memory vault.
     cap_drop:
       - NET_RAW
       - NET_ADMIN
