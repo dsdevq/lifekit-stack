@@ -10,7 +10,7 @@ USER root
 # image bakes in whatever openclaw was current when it was built; we pin
 # explicitly so version upgrades survive container recreates. Bump this
 # line to upgrade.
-ARG OPENCLAW_VERSION=2026.6.6
+ARG OPENCLAW_VERSION=2026.6.8
 RUN npm i -g --force openclaw@${OPENCLAW_VERSION}
 
 # Enforce pipefail in any RUN that pipes commands (hadolint DL4006).
@@ -67,6 +67,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxcomposite1 libxdamage1 libatspi2.0-0 libdrm2 libxkbcommon0 \
         libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
     && rm -rf /var/lib/apt/lists/*
+
+# Skill CLIs (nutrition-claw, life-state, workout-claw) are npm-linked into a
+# persisted prefix under the bind-mounted .openclaw volume. Codex runs tool
+# commands via `bash -lc` (login shell), whose PATH is rebuilt from /etc/profile
+# and drops the image ENV PATH, so the linked CLIs would otherwise be
+# "command not found" under the Codex runtime. This profile.d entry puts the
+# persisted bin dir on the login-shell PATH, durable across recreates/rebuilds.
+RUN printf 'export PATH="/home/node/.openclaw/npm-global/bin:$PATH"\n' > /etc/profile.d/zz-skill-clis.sh \
+    && chmod 0644 /etc/profile.d/zz-skill-clis.sh
 
 USER node
 
