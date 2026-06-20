@@ -1,5 +1,5 @@
 [Unit]
-Description=Rotate /srv/life memory store (logrotate + markdown archival, no LLM)
+Description=Rotate /srv/memory memory store (logrotate + markdown archival, no LLM)
 After=network-online.target
 
 [Service]

@@ -125,13 +125,13 @@ ufw --force enable
 say "Creating /srv/{lifekit-stack,life,openclaw/*} + /var/lib/lifekit"
 install -d -o "$LIFEKIT_USER" -g "$LIFEKIT_USER" -m 0750 \
   "$REPO_DIR" \
-  /srv/life \
+  /srv/memory \
   /srv/openclaw \
   /srv/openclaw/config \
   /srv/openclaw/workspace \
   /srv/openclaw/secret-key
 
-# Runtime-state dir — split from /srv/life per proposal
+# Runtime-state dir — split from /srv/memory per proposal
 # 2026-05-27-runtime-knowledge-split. Holds orchestrator.sqlite, queue.jsonl,
 # .curator-proposed/, .last_consolidation, flat-bucket tasks/, intake_index.json.
 install -d -o "$LIFEKIT_USER" -g "$LIFEKIT_USER" -m 0750 \
@@ -174,9 +174,9 @@ systemctl daemon-reload
 systemctl enable --now openclaw-config-sync.timer
 
 # ─── memory-store rotation timer ──────────────────────────────────────────────
-# Monthly rotation of the /srv/life memory store + OpenClaw agent trajectories
+# Monthly rotation of the /srv/memory memory store + OpenClaw agent trajectories
 # (logrotate + rotate-extras.py, no LLM). The rotate-extras.py + logrotate-memory.conf
-# scripts live in the dsdevq/life repo at /srv/life/system/ (delivered by memory-sync);
+# scripts live in the dsdevq/life repo at /srv/memory/system/ (delivered by memory-sync);
 # this only installs the host units + wrapper. Runtime state -> /var/lib/lifekit/rotation.
 
 say "Installing memory-store rotation script + systemd units"
@@ -235,7 +235,7 @@ Next steps:
        rsync -a ~/.openclaw/workspace/skills/ $LIFEKIT_USER@$TAILSCALE_HOSTNAME:/srv/openclaw/workspace/skills/
   3. Run the deploy script (on the host, as $LIFEKIT_USER):
        cd $REPO_DIR && ./scripts/deploy.sh
-  4. rsync your ~/.life/ data:
-       rsync -a ~/.life/ $LIFEKIT_USER@$TAILSCALE_HOSTNAME:/srv/life/
+  4. rsync your ~/memory/ data:
+       rsync -a ~/memory/ $LIFEKIT_USER@$TAILSCALE_HOSTNAME:/srv/memory/
 
 EOF
