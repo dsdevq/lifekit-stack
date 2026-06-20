@@ -25,7 +25,7 @@ A short tour of the design decisions behind `lifekit-stack`. Long-form thinking 
 │       ▲                                                           │
 │       │ drains queue, updates domains                            │
 │  ┌────┴───────────────────────────────────────────────────┐    │
-│  │  lifekit-curator (Docker container)                     │    │
+│  │  lifekit-curator  [RETIRED 2026-05-25]                  │    │
 │  │  • Drains /srv/life/queue.jsonl every ~15 min           │    │
 │  │  • Only process that mutates domain files               │    │
 │  │  • Slow loop, low blast radius                          │    │
@@ -76,11 +76,11 @@ Two peer containers in v0.x, each restartable without affecting the other:
 | Service | Job | Failure mode | Safety mechanism |
 |---|---|---|---|
 | OpenClaw gateway | All I/O — Telegram, voice, cron, conversational agent | Inbound stops; data layer untouched. | Read-only on `~/.life/` except via lightweight `queue.jsonl` appends. |
-| `lifekit-curator` | Drains `queue.jsonl` → updates domain files in `~/.life/domains/` | Queue grows; nothing else affected. | Every domain edit is a git commit on `~/.life/`; bad edit = `git revert`. Audit trail is permanent. Plus supervised-mode option per PLAN.md curator protocol. |
+| `lifekit-curator` _(retired 2026-05-25)_ | Drains `queue.jsonl` → updates domain files in `~/.life/domains/` | Queue grows; nothing else affected. | Every domain edit is a git commit on `~/.life/`; bad edit = `git revert`. Audit trail is permanent. Plus supervised-mode option per PLAN.md curator protocol. |
 
 **Why swarm is NOT a sibling container.** Autonomous code-writing workloads (the future swarm build engine, autonomous research workers, anything that mutates code or money) live behind the `BuildEngine` / `Sandbox` ports. They are invoked *by* OpenClaw via the LangGraph platform API, run *inside* a NemoClaw sandbox spawned per invocation, and exit when the build is done. They are not long-lived sibling containers in the compose stack. Putting them at the same level as OpenClaw would defeat the per-spawn sandboxing the design relies on.
 
-**Why the curator IS a sibling container.** Curator's blast radius is bounded by git history on `~/.life/`, not by a runtime sandbox. The trust mechanism is the audit trail + supervised-mode patch review. A NemoClaw wrap would add overhead without a security gain for this specific workload.
+**Why the curator WAS a sibling container** _(retired 2026-05-25 — kept as design history)_. Curator's blast radius is bounded by git history on `~/.life/`, not by a runtime sandbox. The trust mechanism is the audit trail + supervised-mode patch review. A NemoClaw wrap would add overhead without a security gain for this specific workload.
 
 The split is at the process / container boundary. Within each container, the runtime's native concurrency handles the rest.
 

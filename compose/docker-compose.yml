@@ -5,7 +5,6 @@
 #   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations.
 #                          On-demand only (compose profile `cli`); not started by `docker compose up -d`.
 #                          Invoke via: `docker compose --profile cli run --rm openclaw-cli <command>`
-#   lifekit-curator      — queue-drain memory maintainer. RETIRED 2026-05-25; pending v2. Profile-gated; not started by default.
 #   lifekit-dashboard    — read-only web UI over ~/memory and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
 #   devclaw-mcp          — DevClaw v2 MCP server (autonomous coding via OpenHands); internal-only on :8000
@@ -346,49 +345,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-
-  lifekit-curator:
-    <<: *policy
-    # RETIRED 2026-05-25. Stopped pending v2 replacement (OpenClaw voice-idea-capture +
-    # re-implemented curator). Profile-gated so `docker compose up -d` never starts it.
-    # Invoke explicitly: docker compose --profile curator up -d lifekit-curator
-    profiles:
-      - curator
-    build:
-      context: ./curator
-    image: lifekit-curator:local
-    deploy:
-      resources:
-        limits:
-          memory: 256m
-    environment:
-      LIFEKIT_ROOT: /srv/memory
-      # Runtime state moved out of the knowledge layer per
-      # `system/proposals.md → 2026-05-27-runtime-knowledge-split`.
-      # The curator reads queue.jsonl from the state mount and tracks the
-      # dream-cycle marker there too.
-      LIFEKIT_STATE_DIR: /srv/lifekit-state
-      LIFEKIT_QUEUE_FILE: /srv/lifekit-state/queue.jsonl
-      LIFEKIT_DEAD_LETTER_FILE: /srv/lifekit-state/queue.dead-letter.jsonl
-      LIFEKIT_CONSOLIDATION_MARKER: /srv/lifekit-state/.last_consolidation
-      # Safety-net periodic drain. Event-driven inotify is the primary trigger;
-      # this watchdog only fires if a notify event was missed. Default 1 hour.
-      LIFEKIT_WATCHDOG_INTERVAL_SECONDS: ${LIFEKIT_WATCHDOG_INTERVAL_SECONDS:-3600}
-      LIFEKIT_QUEUE_WATCH_DEBOUNCE_MS: ${LIFEKIT_QUEUE_WATCH_DEBOUNCE_MS:-200}
-      LIFEKIT_LOG_LEVEL: ${LIFEKIT_LOG_LEVEL:-INFO}
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/srv/memory
-      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/srv/lifekit-state
-      # Reuse the host user's Claude CLI session — no API key needed.
-      # The path inside the container is /home/lifekit because we renamed
-      # the base image's `node` user to `lifekit` (UID 1000 match).
-      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/lifekit/.claude
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
 
   # Build-only — devclaw-sandbox is never run as a long-lived service. It
   # publishes the devclaw-sandbox:local image that devclaw-mcp spawns one
