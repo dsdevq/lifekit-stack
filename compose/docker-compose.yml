@@ -401,6 +401,12 @@ services:
       # 'task' is the full firehose (every dispatch + self-correction) — set
       # during dogfooding to watch a run closely; revert to 'owner' for normal use.
       DEVCLAW_NOTIFY_ALTITUDE: ${DEVCLAW_NOTIFY_ALTITUDE:-task}
+      # Auto-merge gate-green milestone PRs to the default branch so a durable
+      # goal iterates hands-off (the workspace resets to origin/main each action,
+      # so without merging, milestone N+1 can't build on milestone N). Default
+      # OFF (consequential for real repos — the done-gate review is the safety
+      # net); set DEVCLAW_GOAL_AUTOMERGE=1 in .env to enable.
+      DEVCLAW_GOAL_AUTOMERGE: ${DEVCLAW_GOAL_AUTOMERGE:-0}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
       OPENHANDS_SUPPRESS_BANNER: "1"
