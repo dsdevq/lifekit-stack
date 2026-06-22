@@ -449,6 +449,13 @@ services:
       # mitigations. Acceptable here because devclaw-mcp's only network
       # input is the compose-internal MCP endpoint behind openclaw-gateway.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Host tailscaled control socket — lets the MCP server run `tailscale serve`
+      # to expose durable deploys (deploy.py) on the tailnet, fully automatically.
+      # tailscaled itself runs on the HOST; we mount only its socket. The host
+      # socket is mode 0666, so the non-root `node` user can use it without a
+      # `tailscale set --operator` grant. deploy.py degrades gracefully if it's
+      # ever absent (returns the one-time serve command instead of failing).
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
       # Inherit Claude Code OAuth from the same files the gateway uses.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json

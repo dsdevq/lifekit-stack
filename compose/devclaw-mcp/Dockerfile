@@ -37,6 +37,19 @@ https://cli.github.com/packages stable main" \
  && apt-get install -y --no-install-recommends docker-ce-cli gh \
  && rm -rf /var/lib/apt/lists/*
 
+# ---- tailscale CLI ---------------------------------------------------------
+# devclaw's deploy layer (deploy.py) shells out to `tailscale serve` to expose
+# durable deploys on the tailnet. ONLY the CLI is used here — tailscaled runs on
+# the HOST and is reached over its control socket, bind-mounted by compose. The
+# package pulls tailscaled too, but it is never started in this container.
+RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg \
+      -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
+ && curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list \
+      -o /etc/apt/sources.list.d/tailscale.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends tailscale \
+ && rm -rf /var/lib/apt/lists/*
+
 # ---- claude CLI + ACP bridge (npm-installed globally) ---------------------
 # claude-code: the actual CLI binary whose OAuth session we inherit.
 # claude-agent-acp: the ACP adapter the Python runner spawns.
