@@ -421,7 +421,23 @@ services:
       #     at /var/lib/devclaw/workspaces/<id>, sandcastle-runner swaps the
       #     prefix for the host's view of the same bind-mount so the
       #     spawned sandbox container can actually see it.
-      DEVCLAW_SANDBOX_IMAGE: devclaw-sandbox:local
+      # devclaw-sandbox-dotnet is the multi-runtime variant (Python + Node +
+      # .NET 9 + .NET 10) — the right default now that the planning engine
+      # (Pillar 1) routes goals at any of the supported stacks. Operators can
+      # still set DEVCLAW_SANDBOX_IMAGE in the env to swap to a different
+      # variant per host. The bare devclaw-sandbox:local image stays alive
+      # as a fallback target; this just stops a fresh deploy from landing
+      # on a sandbox that lacks dotnet (2026-06-26 regression).
+      DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-devclaw-sandbox-dotnet:local}
+      # Pillar 1 (decomposer + checklist + per-item dispatch) is the default
+      # cognition path. Off keeps the legacy backlog-only mode; set to 0 in
+      # the env to opt out per host while migrating existing goals.
+      DEVCLAW_GOAL_DECOMPOSE: ${DEVCLAW_GOAL_DECOMPOSE:-1}
+      # 20 min covers the decomposer's structured-YAML generation pass
+      # (sometimes 5-10 min on Sonnet for rich done_when text). 90 s — the
+      # planner default — is fine for next-action + evaluator calls but too
+      # tight for the decomposer (live regression 2026-06-26).
+      DEVCLAW_PLANNER_TIMEOUT_MS: ${DEVCLAW_PLANNER_TIMEOUT_MS:-1200000}
       DEVCLAW_HOST_CLAUDE_DIR: ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}
       DEVCLAW_CONTAINER_PATH_PREFIX: /var/lib/devclaw/workspaces
       DEVCLAW_HOST_PATH_PREFIX: ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}
