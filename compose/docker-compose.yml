@@ -433,6 +433,12 @@ services:
       # cognition path. Off keeps the legacy backlog-only mode; set to 0 in
       # the env to opt out per host while migrating existing goals.
       DEVCLAW_GOAL_DECOMPOSE: ${DEVCLAW_GOAL_DECOMPOSE:-1}
+      # Firming phase (PhaseHandler #1, between investigating and executing) —
+      # turns rough goals into structured goals that surface unanswered
+      # questions to the owner via the answer_unknowns MCP tool before the
+      # decomposer runs. Default off so legacy goals are unaffected; set
+      # DEVCLAW_GOAL_FIRMING=1 in .env to enable per host.
+      DEVCLAW_GOAL_FIRMING: ${DEVCLAW_GOAL_FIRMING:-0}
       # 20 min covers the decomposer's structured-YAML generation pass
       # (sometimes 5-10 min on Sonnet for rich done_when text). 90 s — the
       # planner default — is fine for next-action + evaluator calls but too
