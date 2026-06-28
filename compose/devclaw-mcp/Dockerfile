@@ -37,6 +37,17 @@ https://cli.github.com/packages stable main" \
  && apt-get install -y --no-install-recommends docker-ce-cli gh \
  && rm -rf /var/lib/apt/lists/*
 
+# ---- chromium for done-gate E2E -------------------------------------------
+# Done-gate's E2E phase (per E2E test layer proposal) spawns the goal target
+# in-process and drives it via Playwright. devclaw-mcp must therefore have
+# Chromium + its system libs available. Same lib list as openclaw-gateway and
+# devclaw-sandbox so we don't drift.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+        libxcomposite1 libxdamage1 libatspi2.0-0 libdrm2 libxkbcommon0 \
+        libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
+ && rm -rf /var/lib/apt/lists/*
+
 # ---- tailscale CLI ---------------------------------------------------------
 # devclaw's deploy layer (deploy.py) shells out to `tailscale serve` to expose
 # durable deploys on the tailnet. ONLY the CLI is used here — tailscaled runs on
@@ -55,7 +66,8 @@ RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg \
 # claude-agent-acp: the ACP adapter the Python runner spawns.
 RUN npm install -g \
       @anthropic-ai/claude-code \
-      @agentclientprotocol/claude-agent-acp
+      @agentclientprotocol/claude-agent-acp \
+      @playwright/mcp@latest
 
 # ---- DevClaw Python source -------------------------------------------------
 ARG DEVCLAW_REPO=https://github.com/dsdevq/devclaw.git
@@ -83,5 +95,10 @@ ENV DEVCLAW_TRANSPORT=http \
 EXPOSE 8000
 
 USER node
+
+# Pre-fetch the Playwright Chromium build into the runtime user's cache so
+# the done-gate E2E phase doesn't pay a ~150MB download on first invocation.
+# Lands in /home/node/.cache/ms-playwright.
+RUN npx -y playwright@latest install chromium
 
 CMD ["devclaw-mcp"]
