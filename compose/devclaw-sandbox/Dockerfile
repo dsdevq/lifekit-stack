@@ -59,6 +59,12 @@ RUN npm install -g \
  && npm cache clean --force
 
 COPY --from=source --chown=agent:agent /src/openhands-runner/runner.py /opt/devclaw/runner.py
+# Skill bundle + hooks (cross-repo doctrine + mechanical pre/post checks). The
+# runner loads skills per-kind and invokes hooks around the agent loop. Per-
+# repo facts still live in each project's AGENTS.md.
+COPY --from=source --chown=agent:agent /src/openhands-runner/skills/ /opt/devclaw/skills/
+COPY --from=source --chown=agent:agent /src/openhands-runner/hooks/  /opt/devclaw/hooks/
+RUN chmod +x /opt/devclaw/hooks/*.sh
 # Sandbox-only MCP config baked from the cloned repo; runner.py copies this to
 # /workspace/.mcp.json so claude auto-discovers Playwright MCP WITHOUT mounting
 # the host's mcpServers (which the sandcastle allowlist deliberately excludes).
