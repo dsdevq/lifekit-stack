@@ -63,6 +63,14 @@ COPY --from=source --chown=agent:agent /src/openhands-runner/runner.py /opt/devc
 # /workspace/.mcp.json so claude auto-discovers Playwright MCP WITHOUT mounting
 # the host's mcpServers (which the sandcastle allowlist deliberately excludes).
 COPY --from=source --chown=agent:agent /src/openhands-runner/sandbox-mcp.json /opt/devclaw/sandbox-mcp.json
+# Universal skill bundle + hooks baked into the image. runner.py reads
+# /opt/devclaw/skills/ via _load_skills() and falls back to legacy embedded
+# strings when missing — without these COPY steps the skill bundle has been
+# a no-op since devclaw PR #128. The canonical source is devclaw's own
+# .sandcastle/Dockerfile; this image is rebuilt off the same repo.
+COPY --from=source --chown=agent:agent /src/openhands-runner/skills/ /opt/devclaw/skills/
+COPY --from=source --chown=agent:agent /src/openhands-runner/hooks/  /opt/devclaw/hooks/
+RUN chmod +x /opt/devclaw/hooks/*.sh
 
 USER agent
 
