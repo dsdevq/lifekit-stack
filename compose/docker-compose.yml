@@ -518,6 +518,61 @@ services:
       retries: 5
       start_period: 60s
 
+  ops-agent:
+    <<: *policy
+    # ops-agent (ops-PR1) — resident watcher that detects stuck devclaw goals
+    # and records incidents the owner can act on. SEPARATE PROCESS from
+    # devclaw-mcp by design: when the closeloop incident bit devclaw itself
+    # (~/memory/projects/devclaw/plan.md → "Operations agent" section), an
+    # in-process self-heal handler would have shared the same defect.
+    #
+    # ops-PR1 ships O1 (no-progress watchdog) + L0 (detect-and-record only).
+    # NO Claude call, NO MCP call, NO actions on devclaw state at this PR —
+    # those land in ops-PR2..ops-PR4. See ops-agent/README.md.
+    build:
+      context: ../ops-agent
+    image: ops-agent:local
+    depends_on:
+      - devclaw-mcp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    environment:
+      OPS_AGENT_GOALS_DIR: /data/goals
+      OPS_AGENT_INCIDENTS_DIR: /data/incidents
+      OPS_AGENT_POLL_INTERVAL_S: ${OPS_AGENT_POLL_INTERVAL_S:-60}
+      OPS_AGENT_DEDUP_WINDOW_S: ${OPS_AGENT_DEDUP_WINDOW_S:-86400}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      # Devclaw's goal store lives in the shared devclaw-state volume at
+      # /var/lib/devclaw/goals (DEVCLAW_GOALS_DIR on devclaw-mcp above).
+      # Mount the same volume here READ-ONLY — the boundary contract is that
+      # ops-agent never mutates devclaw substrates.
+      - devclaw-state:/data/devclaw-state:ro
+      # Subpath isn't natively supported by named volumes in compose, so the
+      # agent points at the goals subdir via env (DEVCLAW_GOALS_DIR maps to
+      # /var/lib/devclaw/goals on devclaw-mcp — same path inside this
+      # container after the volume mount).
+      # Incident output dir — bind-mounted from the host so the owner can
+      # browse incidents/log.md from their SSHFS session without needing to
+      # docker exec in.
+      - ${LIFEKIT_OPS_AGENT_DIR:-/srv/memory/projects/ops-agent}:/data/incidents
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    # Override OPS_AGENT_GOALS_DIR so it points inside the RO volume mount.
+    command: ["ops-agent"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export OPS_AGENT_GOALS_DIR=/data/devclaw-state/goals
+        exec "$$@"
+      - --
+
   notify-relay:
     <<: *policy
     # Turns devclaw's notify_url POST into a Telegram message via direct
