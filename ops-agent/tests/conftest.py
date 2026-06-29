@@ -60,3 +60,27 @@ def incidents_dir(tmp_path: Path) -> Path:
 def fixed_now() -> datetime:
     # Frozen clock for deterministic dedup-window assertions.
     return datetime(2026, 6, 29, 12, 0, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _stub_cognition(monkeypatch):
+    """Hermetic default: no real ``claude --print`` ever runs in the test
+    suite. Returns a ``noop`` decision unless a test overrides the stub.
+
+    Autouse on purpose — every test path that hits ``ops_agent.main.tick``
+    routes through the cognition layer now, and a real subprocess in CI is
+    flaky AND violates the "no network, no real claude" hermeticity contract.
+    Tests that want a different decision (e.g. ``evaluate_goal``) override
+    via ``monkeypatch.setattr("ops_agent.main.call_claude", ...)``.
+    """
+    from ops_agent.cognition import CognitionCall
+
+    async def _fake_call_claude(prompt, *, role="ops-agent", model=None, timeout_s=None):
+        return CognitionCall(
+            stdout='{"action": "noop", "reasoning": "stub: hermetic test default"}',
+            model="stub",
+            latency_ms=1,
+            argv_head="stub",
+        )
+
+    monkeypatch.setattr("ops_agent.main.call_claude", _fake_call_claude)

@@ -520,15 +520,20 @@ services:
 
   ops-agent:
     <<: *policy
-    # ops-agent (ops-PR1) — resident watcher that detects stuck devclaw goals
-    # and records incidents the owner can act on. SEPARATE PROCESS from
-    # devclaw-mcp by design: when the closeloop incident bit devclaw itself
-    # (~/memory/projects/devclaw/plan.md → "Operations agent" section), an
-    # in-process self-heal handler would have shared the same defect.
+    # ops-agent (ops-PR2) — resident watcher that detects stuck devclaw goals,
+    # decides via a Claude playbook, and (for L1 only) calls devclaw's MCP
+    # evaluate_goal tool. SEPARATE PROCESS from devclaw-mcp by design: when
+    # the closeloop incident bit devclaw itself (~/memory/projects/devclaw/
+    # plan.md → "Operations agent" section), an in-process self-heal handler
+    # would have shared the same defect.
     #
-    # ops-PR1 ships O1 (no-progress watchdog) + L0 (detect-and-record only).
-    # NO Claude call, NO MCP call, NO actions on devclaw state at this PR —
-    # those land in ops-PR2..ops-PR4. See ops-agent/README.md.
+    # ops-PR2 ships:
+    #   - O1 detector (no-progress watchdog) + L0 (record incident).
+    #   - Cognition: subprocess `claude --print` via the bind-mounted Pro
+    #     OAuth session (no API key).
+    #   - L1 action: MCP evaluate_goal(goal_id) against devclaw-mcp.
+    # L2 (steer-injection), L3 (devclaw fix-PR), O2/O3 triggers stay deferred
+    # to ops-PR3+. See ops-agent/README.md.
     build:
       context: ../ops-agent
     image: ops-agent:local
@@ -537,27 +542,40 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256m
+          memory: 512m
     environment:
       OPS_AGENT_GOALS_DIR: /data/goals
       OPS_AGENT_INCIDENTS_DIR: /data/incidents
       OPS_AGENT_POLL_INTERVAL_S: ${OPS_AGENT_POLL_INTERVAL_S:-60}
       OPS_AGENT_DEDUP_WINDOW_S: ${OPS_AGENT_DEDUP_WINDOW_S:-86400}
+      # Cognition: claude CLI is installed in the image. The Pro OAuth
+      # session is inherited via the ~/.claude bind-mount below (mirrors
+      # devclaw-mcp's pattern — no API key, ever).
+      OPS_AGENT_CLAUDE_MODEL: ${OPS_AGENT_CLAUDE_MODEL:-sonnet}
+      OPS_AGENT_CLAUDE_TIMEOUT_S: ${OPS_AGENT_CLAUDE_TIMEOUT_S:-60}
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+      # MCP client: target devclaw-mcp on the compose-internal network.
+      # OPS_AGENT_DEVCLAW_MCP_TOKEN matches devclaw's DEVCLAW_TOKEN when set
+      # (devclaw's bearer auth is off by default — see server/lifecycle.py).
+      OPS_AGENT_DEVCLAW_MCP_URL: ${OPS_AGENT_DEVCLAW_MCP_URL:-http://devclaw-mcp:8000/mcp}
+      OPS_AGENT_DEVCLAW_MCP_TOKEN: ${DEVCLAW_TOKEN:-}
+      OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S: ${OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S:-30}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Devclaw's goal store lives in the shared devclaw-state volume at
       # /var/lib/devclaw/goals (DEVCLAW_GOALS_DIR on devclaw-mcp above).
       # Mount the same volume here READ-ONLY — the boundary contract is that
-      # ops-agent never mutates devclaw substrates.
+      # ops-agent never mutates devclaw substrates directly.
       - devclaw-state:/data/devclaw-state:ro
-      # Subpath isn't natively supported by named volumes in compose, so the
-      # agent points at the goals subdir via env (DEVCLAW_GOALS_DIR maps to
-      # /var/lib/devclaw/goals on devclaw-mcp — same path inside this
-      # container after the volume mount).
       # Incident output dir — bind-mounted from the host so the owner can
       # browse incidents/log.md from their SSHFS session without needing to
       # docker exec in.
       - ${LIFEKIT_OPS_AGENT_DIR:-/srv/memory/projects/ops-agent}:/data/incidents
+      # Claude CLI session creds — READ-ONLY. Same pattern as devclaw-mcp
+      # and openclaw-gateway. Both ~/.claude and the sibling .claude.json
+      # are required for the SDK to recognize the Pro subscription session.
+      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude:ro
+      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json:ro
     cap_drop:
       - NET_RAW
       - NET_ADMIN
