@@ -3,9 +3,9 @@ ops-agent acts on devclaw.
 
 Boundary contract (load-bearing — see ``~/memory/projects/devclaw/plan.md``):
 
-  - ops-PR2 exposes exactly ONE tool: ``evaluate_goal``. NOT ``steer_goal``,
-    NOT ``cancel_goal``, NOT any other write surface — those are L2+ actions
-    deferred to ops-PR3+.
+  - ops-PR2 exposed exactly ONE tool: ``evaluate_goal``. ops-PR3 escalates
+    to TWO tools by adding ``steer_goal`` (L2 — inbox injection). Beyond
+    that — ``cancel_goal``, phase transitions, etc. — remains deferred.
   - The class :class:`DevclawMCPClient` MUST stay structurally narrow:
     adding a method here is a deliberate authority escalation. Reviewers
     should treat any PR that grows this class with the same care as a PR
@@ -148,6 +148,35 @@ class DevclawMCPClient:
                 message="evaluate_goal requires non-empty goal_id",
             )
         return await self._call_tool("evaluate_goal", {"goal_id": goal_id})
+
+    async def steer_goal(self, goal_id: str, message: str) -> dict[str, Any]:
+        """L2 action — append a one-line steering correction to a goal's inbox.
+
+        Maps onto devclaw's ``steer_goal(goal_id, message)`` MCP tool
+        (see ``devclaw/server/tools.py``). Devclaw records the message
+        as steering, unblocks the goal if blocked, and pokes the heartbeat
+        so the next-action planner picks the correction up immediately.
+
+        Returns whatever devclaw's tool returns (typically a small dict
+        confirming the goal_id + the recorded steering). Raises
+        :class:`MCPClientError` on transport / protocol / tool error —
+        non-empty ``goal_id`` and ``message`` are required (devclaw's tool
+        also enforces both, but we shortcut the round-trip here).
+        """
+        if not goal_id:
+            raise MCPClientError(
+                reason="protocol",
+                message="steer_goal requires non-empty goal_id",
+            )
+        if not message:
+            raise MCPClientError(
+                reason="protocol",
+                message="steer_goal requires non-empty message",
+            )
+        return await self._call_tool(
+            "steer_goal",
+            {"goal_id": goal_id, "message": message},
+        )
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """JSON-RPC ``tools/call`` wrapper.

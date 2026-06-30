@@ -36,7 +36,7 @@ async def test_tick_writes_incident_for_stuck_goal(
     write_goal(goals_dir, "stuck", no_progress_notified=True, objective="ship X")
     store = IncidentStore(incidents_dir, dedup_window_s=86400)
 
-    written = await tick(_cfg(goals_dir, incidents_dir), store, NoProgressDetector(), None)
+    written = await tick(_cfg(goals_dir, incidents_dir), store, [NoProgressDetector()], None)
 
     assert written == 1
     folders = [p for p in incidents_dir.iterdir() if p.is_dir() and not p.name.startswith(".")]
@@ -55,8 +55,8 @@ async def test_tick_is_idempotent_within_window(
     cfg = _cfg(goals_dir, incidents_dir)
     det = NoProgressDetector()
 
-    first = await tick(cfg, store, det, None)
-    second = await tick(cfg, store, det, None)
+    first = await tick(cfg, store, [det], None)
+    second = await tick(cfg, store, [det], None)
 
     assert first == 1
     assert second == 0  # dedup'd
@@ -74,11 +74,11 @@ async def test_tick_re_fires_after_dedup_window(
     det = NoProgressDetector()
 
     monkeypatch.setattr("ops_agent.main._utcnow", lambda: fixed_now)
-    assert await tick(cfg, store, det, None) == 1
+    assert await tick(cfg, store, [det], None) == 1
 
     later = fixed_now + timedelta(hours=2)
     monkeypatch.setattr("ops_agent.main._utcnow", lambda: later)
-    assert await tick(cfg, store, det, None) == 1
+    assert await tick(cfg, store, [det], None) == 1
 
 
 @pytest.mark.asyncio
@@ -88,5 +88,5 @@ async def test_tick_handles_no_goals_dir(
     monkeypatch.setattr("ops_agent.main._utcnow", lambda: fixed_now)
     missing = tmp_path / "does-not-exist"
     store = IncidentStore(incidents_dir, dedup_window_s=86400)
-    written = await tick(_cfg(missing, incidents_dir), store, NoProgressDetector(), None)
+    written = await tick(_cfg(missing, incidents_dir), store, [NoProgressDetector()], None)
     assert written == 0

@@ -1,8 +1,9 @@
 """Action layer — the small set of side effects ops-agent is authorized to
 perform on devclaw, one module per authority level.
 
-ops-PR2 ships ONLY L1 (:mod:`.evaluate_goal`). L2 (steer-injection) and L3
-(devclaw-bug-fix-ticket) land in later PRs — see
+ops-PR2 shipped L1 (:mod:`.evaluate_goal`). ops-PR3 adds L2
+(:mod:`.steer_goal` — inbox injection on drifting goals). L3
+(devclaw-bug-fix-ticket) stays deferred — see
 ``~/memory/projects/devclaw/plan.md``.
 
 Each action returns an :class:`ActionOutcome` regardless of success / failure
@@ -16,8 +17,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .evaluate_goal import perform_evaluate_goal
+from .steer_goal import perform_steer_goal
 
-__all__ = ["ActionOutcome", "perform_evaluate_goal", "outcome_to_dict"]
+__all__ = [
+    "ActionOutcome",
+    "perform_evaluate_goal",
+    "perform_steer_goal",
+    "outcome_to_dict",
+]
 
 
 @dataclass(frozen=True)
