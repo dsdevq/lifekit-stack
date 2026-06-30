@@ -295,21 +295,25 @@ async def test_async_context_manager_closes_owned() -> None:
 # ---- structural narrowness contract --------------------------------------
 
 
-def test_client_exposes_only_evaluate_goal() -> None:
-    """Load-bearing boundary: ops-PR2 client must NOT expose any other write surface.
+def test_client_exposes_only_authorized_tools() -> None:
+    """Load-bearing boundary: client surface MUST stay narrow to the PR's authority.
 
-    If a future PR adds an MCP method to this class, this test will fail —
-    forcing a deliberate review of the authority escalation.
+    ops-PR2 authorized ``evaluate_goal``; ops-PR3 escalated to also include
+    ``steer_goal``. Any further tool (``cancel_goal``, phase transitions,
+    devclaw-bug-fix surfaces) stays explicitly forbidden — if a future PR
+    adds another MCP method to this class without updating this allowlist
+    the test fails, forcing a deliberate review of the authority escalation.
     """
     public_async_methods = {
         name
         for name in dir(DevclawMCPClient)
         if not name.startswith("_") and callable(getattr(DevclawMCPClient, name))
     }
-    # Allowed surface: the one tool + lifecycle helpers.
+    # Allowed surface: the two tools shipped through ops-PR3 + lifecycle helpers.
     assert "evaluate_goal" in public_async_methods
-    # Explicitly assert the tools that are DEFERRED to ops-PR3+ are absent.
-    forbidden = {"steer_goal", "cancel_goal", "fix_bug", "implement_feature", "answer_unknowns"}
+    assert "steer_goal" in public_async_methods
+    # Explicitly assert the tools that remain DEFERRED beyond ops-PR3 are absent.
+    forbidden = {"cancel_goal", "fix_bug", "implement_feature", "answer_unknowns"}
     assert public_async_methods.isdisjoint(
         forbidden
     ), f"DevclawMCPClient leaked deferred tools: {public_async_methods & forbidden}"
