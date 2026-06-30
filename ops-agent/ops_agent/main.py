@@ -46,14 +46,16 @@ from . import actions, playbooks
 from .actions import ActionOutcome, outcome_to_dict
 from .cognition import CognitionError, call_claude
 from .config import OpsConfig, load_config
-from .detectors import NoProgressDetector, NoSteeringDetector
+from .detectors import NoProgressDetector, NoSteeringDetector, VerifyingStallDetector
 from .incident import Incident, IncidentStore
 from .mcp_client import DevclawMCPClient
 
-# Discriminated union of the two playbook-decision types this PR routes.
+# Discriminated union of the playbook-decision types this PR routes.
 # Kept here (not in playbooks/__init__) because it's a daemon-layer concern
 # — the playbook layer itself doesn't know about cross-playbook dispatch.
-PlaybookDecision = playbooks.StuckGoalDecision | playbooks.DriftingGoalDecision
+PlaybookDecision = (
+    playbooks.StuckGoalDecision | playbooks.DriftingGoalDecision | playbooks.VerifyingStallDecision
+)
 
 _log = logging.getLogger("ops_agent")
 
@@ -64,12 +66,16 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _build_prompt_for(incident: Incident) -> str:
+def _build_prompt_for(incident: Incident, cfg: OpsConfig) -> str:
     """Render the right playbook prompt for ``incident.trigger``.
 
-    O1 → stuck-goal-evaluate; O2 → drifting-goal-steer. Unknown triggers
-    raise — that's a programming bug (the detector layer is the only
-    surface that mints triggers and main wires them in).
+    O1 → stuck-goal-evaluate; O2 → drifting-goal-steer; O3 →
+    verifying-stall-unblock. Unknown triggers raise — that's a
+    programming bug (the detector layer is the only surface that mints
+    triggers and main wires them in).
+
+    ``cfg`` is threaded through so O3's prompt can surface the
+    docker_restart allowlist verbatim from the runtime config.
     """
     if incident.trigger == "O1":
         return playbooks.build_stuck_goal_prompt(
@@ -92,6 +98,17 @@ def _build_prompt_for(incident: Incident) -> str:
             threshold_hours=threshold_hours,
             detected_at=incident.detected_at.isoformat(timespec="seconds"),
         )
+    if incident.trigger == "O3":
+        threshold_hours = float(incident.payload.get("threshold_hours", 4.0))
+        return playbooks.build_verifying_stall_prompt(
+            goal_id=incident.goal_id,
+            objective=str(incident.payload.get("objective", "")),
+            phase=str(incident.payload.get("phase", "")),
+            last_progress_at=incident.payload.get("last_progress_at"),
+            detected_at=incident.detected_at.isoformat(timespec="seconds"),
+            threshold_hours=threshold_hours,
+            allowlisted_services=cfg.docker_restart_allowlist,
+        )
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
@@ -101,6 +118,8 @@ def _parse_decision_for(incident: Incident, raw: str) -> PlaybookDecision:
         return playbooks.parse_stuck_goal_decision(raw)
     if incident.trigger == "O2":
         return playbooks.parse_drifting_goal_decision(raw)
+    if incident.trigger == "O3":
+        return playbooks.parse_verifying_stall_decision(raw)
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
@@ -111,6 +130,10 @@ def _noop_decision_for(incident: Incident, reasoning: str) -> PlaybookDecision:
     if incident.trigger == "O2":
         return playbooks.DriftingGoalDecision(
             action="noop", message="", reasoning=reasoning, raw_response=""
+        )
+    if incident.trigger == "O3":
+        return playbooks.VerifyingStallDecision(
+            action="noop", service_name="", reasoning=reasoning, raw_response=""
         )
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
@@ -155,6 +178,15 @@ async def _dispatch_action(
             )
         return await actions.perform_steer_goal(incident.goal_id, message, mcp)
 
+    if decision.action == "docker_restart":
+        # ``service_name`` is only meaningful on a VerifyingStallDecision;
+        # the parser guarantees it's a non-empty trimmed pattern-validated
+        # string when the action is docker_restart. mcp is unused but
+        # passed for dispatch-signature uniformity (see the action's
+        # docstring).
+        service_name = getattr(decision, "service_name", "")
+        return await actions.perform_docker_restart(service_name, mcp=mcp)
+
     # Belt-and-suspenders: the playbook parsers already collapse unknown
     # actions to noop. If one slips through we record a failure rather
     # than firing an MCP call we can't validate.
@@ -171,6 +203,7 @@ async def _decide_and_act(
     incident: Incident,
     folder: Path,
     mcp: DevclawMCPClient | None,
+    cfg: OpsConfig,
 ) -> tuple[PlaybookDecision | None, ActionOutcome | None, CognitionError | None]:
     """Run the playbook + action layer for one fresh incident.
 
@@ -193,7 +226,7 @@ async def _decide_and_act(
         )
         return None, None, None
 
-    prompt = _build_prompt_for(incident)
+    prompt = _build_prompt_for(incident, cfg)
 
     # Persist the prompt before the cognition call — if the daemon dies
     # mid-call the prompt is still on disk for forensic review.
@@ -237,6 +270,11 @@ def _write_decision(folder: Path, decision: PlaybookDecision) -> None:
     message = getattr(decision, "message", None)
     if message:
         payload["message"] = message
+    # Verifying-stall docker_restart decisions carry the service name; record
+    # it so the incident folder shows exactly what service was targeted.
+    service_name = getattr(decision, "service_name", None)
+    if service_name:
+        payload["service_name"] = service_name
     (folder / "decision.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
@@ -261,6 +299,9 @@ def _render_outcome_md(
         message = getattr(decision, "message", None)
         if message:
             lines.append(f"- **Steering message:** {message}")
+        service_name = getattr(decision, "service_name", None)
+        if service_name:
+            lines.append(f"- **docker restart target:** `{service_name}`")
     else:
         lines.append(
             "- Incident already had a `decision.json` on disk — no new "
@@ -324,10 +365,11 @@ async def _process_incident(
     folder: Path,
     log_path: Path,
     mcp: DevclawMCPClient | None,
+    cfg: OpsConfig,
 ) -> None:
     """One incident's full cognition + action lifecycle, on-disk side effects
     included."""
-    decision, outcome, cog_err = await _decide_and_act(incident, folder, mcp)
+    decision, outcome, cog_err = await _decide_and_act(incident, folder, mcp, cfg)
     if decision is None:
         # Idempotent skip — already decided on an earlier tick.
         return
@@ -379,7 +421,7 @@ async def tick(
             )
             written += 1
             try:
-                await _process_incident(incident, folder, cfg.incidents_dir / "log.md", mcp)
+                await _process_incident(incident, folder, cfg.incidents_dir / "log.md", mcp, cfg)
             except Exception:  # defensive — never let one incident's cognition kill the loop
                 _log.exception(
                     "incident cognition crashed goal=%s folder=%s — continuing",
@@ -393,7 +435,7 @@ async def run_loop(cfg: OpsConfig, stop: asyncio.Event) -> None:
     store = IncidentStore(cfg.incidents_dir, dedup_window_s=cfg.dedup_window_s)
     # Register every detector here — order is significant only for the
     # order incidents appear in the log on a tick that lights up both.
-    detectors = [NoProgressDetector(), NoSteeringDetector()]
+    detectors = [NoProgressDetector(), NoSteeringDetector(), VerifyingStallDetector()]
     _log.info(
         "ops-agent starting goals_dir=%s incidents_dir=%s poll=%.1fs detectors=%s",
         cfg.goals_dir,

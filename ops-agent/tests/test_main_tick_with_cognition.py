@@ -15,7 +15,11 @@ import pytest
 
 from ops_agent.cognition import CognitionCall, CognitionError
 from ops_agent.config import OpsConfig
-from ops_agent.detectors import NoProgressDetector, NoSteeringDetector
+from ops_agent.detectors import (
+    NoProgressDetector,
+    NoSteeringDetector,
+    VerifyingStallDetector,
+)
 from ops_agent.incident import IncidentStore
 from ops_agent.main import tick
 from ops_agent.mcp_client import MCPClientError
@@ -282,7 +286,9 @@ async def test_tick_does_not_redecide_existing_decision(
         detected_at=fixed_now,
         payload={"objective": "x", "dedup_key": "k"},
     )
-    await _process_incident(incident, folder, incidents_dir / "log.md", mcp)
+    await _process_incident(
+        incident, folder, incidents_dir / "log.md", mcp, _cfg(goals_dir, incidents_dir)
+    )
     # Still 1 — the second pass saw decision.json and skipped cognition.
     assert call_count["n"] == 1
 
@@ -576,3 +582,306 @@ async def test_tick_runs_both_detectors_in_one_pass(
     # Each MCP surface saw exactly the expected single call.
     assert mcp.calls == ["stuck"]
     assert mcp.steer_calls == [("drifty", "re-check")]
+
+
+# ---- O3 + docker_restart action wired through ----------------------------
+
+
+def _write_verifying_stall_goal(
+    goals_dir: Path,
+    goal_id: str,
+    *,
+    phase: str,
+    last_progress_at: datetime,
+) -> None:
+    """Create a goal in a stall phase with a stale last_progress_at.
+
+    Mirrors the writer in test_verifying_stall_detector.py; kept inline so
+    the base conftest helper stays focused on O1's fixture shape.
+    """
+    goal_dir = goals_dir / goal_id
+    goal_dir.mkdir(parents=True, exist_ok=True)
+    (goal_dir / "goal.yaml").write_text(f"objective: stalled goal {goal_id}\ncadence: 1d\n")
+    (goal_dir / "STATUS.md").write_text(
+        f"---\nphase: {phase}\nlast_progress_at: '{last_progress_at.isoformat()}'\n---\n\n"
+        "# status\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tick_o3_docker_restart_action_writes_decision_and_outcome(
+    goals_dir: Path, incidents_dir: Path, fixed_now: datetime, monkeypatch
+) -> None:
+    """End-to-end O3 → verifying-stall-unblock playbook → docker_restart action.
+
+    Stubs ``asyncio.create_subprocess_exec`` with a fake that returns a
+    zero exit — same pattern as the action's own unit tests.
+    """
+    from datetime import timedelta
+
+    monkeypatch.setattr("ops_agent.main._utcnow", lambda: fixed_now)
+    monkeypatch.setattr(
+        "ops_agent.main.call_claude",
+        _stub_call_claude_returning(
+            '{"action": "docker_restart", "service_name": "compose-devclaw-mcp-1", '
+            '"reasoning": "devclaw-mcp appears frozen"}'
+        ),
+    )
+
+    # Stub the subprocess layer so no real docker call is made.
+    import asyncio as _asyncio
+
+    spawn_calls: list[tuple] = []
+
+    class _FakeProc:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (b"compose-devclaw-mcp-1\n", b"")
+
+    async def _fake_create(*args, **kwargs):
+        spawn_calls.append(args)
+        return _FakeProc()
+
+    monkeypatch.setattr(_asyncio, "create_subprocess_exec", _fake_create)
+
+    _write_verifying_stall_goal(
+        goals_dir,
+        "stalled",
+        phase="verifying",
+        last_progress_at=fixed_now - timedelta(hours=6),
+    )
+
+    store = IncidentStore(incidents_dir, dedup_window_s=86400)
+    mcp = _StubMCP()
+
+    written = await tick(_cfg(goals_dir, incidents_dir), store, [VerifyingStallDetector()], mcp)
+
+    assert written == 1
+    folder = _incident_folder(incidents_dir)
+
+    decision = json.loads((folder / "decision.json").read_text())
+    assert decision["action"] == "docker_restart"
+    assert decision["service_name"] == "compose-devclaw-mcp-1"
+    assert "frozen" in decision["reasoning"]
+
+    action = json.loads((folder / "action.json").read_text())
+    assert action["action"] == "docker_restart"
+    assert action["status"] == "ok"
+    assert action["detail"]["service_name"] == "compose-devclaw-mcp-1"
+
+    outcome_md = (folder / "outcome.md").read_text()
+    assert "docker_restart" in outcome_md
+    assert "compose-devclaw-mcp-1" in outcome_md
+
+    # MCP surfaces were NOT touched — docker_restart bypasses MCP entirely.
+    assert mcp.calls == []
+    assert mcp.steer_calls == []
+    # subprocess was invoked with exactly the safe argv shape.
+    assert spawn_calls == [("docker", "restart", "compose-devclaw-mcp-1")]
+
+
+@pytest.mark.asyncio
+async def test_tick_o3_evaluate_goal_action_routes_through_mcp(
+    goals_dir: Path, incidents_dir: Path, fixed_now: datetime, monkeypatch
+) -> None:
+    """O3 incident + playbook choosing evaluate_goal → L1 MCP call (no docker)."""
+    from datetime import timedelta
+
+    monkeypatch.setattr("ops_agent.main._utcnow", lambda: fixed_now)
+    monkeypatch.setattr(
+        "ops_agent.main.call_claude",
+        _stub_call_claude_returning(
+            '{"action": "evaluate_goal", "reasoning": "direction probably wrong"}'
+        ),
+    )
+    _write_verifying_stall_goal(
+        goals_dir,
+        "stalled",
+        phase="verifying",
+        last_progress_at=fixed_now - timedelta(hours=6),
+    )
+
+    store = IncidentStore(incidents_dir, dedup_window_s=86400)
+    mcp = _StubMCP()
+
+    written = await tick(_cfg(goals_dir, incidents_dir), store, [VerifyingStallDetector()], mcp)
+    assert written == 1
+
+    folder = _incident_folder(incidents_dir)
+    action = json.loads((folder / "action.json").read_text())
+    assert action["action"] == "evaluate_goal"
+    assert action["status"] == "ok"
+    # L1 surface hit, docker NOT invoked.
+    assert mcp.calls == ["stalled"]
+
+
+@pytest.mark.asyncio
+async def test_tick_o3_noop_decision_skips_all_side_effects(
+    goals_dir: Path, incidents_dir: Path, fixed_now: datetime, monkeypatch
+) -> None:
+    from datetime import timedelta
+
+    monkeypatch.setattr("ops_agent.main._utcnow", lambda: fixed_now)
+    monkeypatch.setattr(
+        "ops_agent.main.call_claude",
+        _stub_call_claude_returning('{"action": "noop", "reasoning": "looks fine"}'),
+    )
+    _write_verifying_stall_goal(
+        goals_dir,
+        "stalled",
+        phase="verifying",
+        last_progress_at=fixed_now - timedelta(hours=6),
+    )
+
+    store = IncidentStore(incidents_dir, dedup_window_s=86400)
+    mcp = _StubMCP()
+    written = await tick(_cfg(goals_dir, incidents_dir), store, [VerifyingStallDetector()], mcp)
+
+    assert written == 1
+    folder = _incident_folder(incidents_dir)
+    assert not (folder / "action.json").exists()
+    assert mcp.calls == [] and mcp.steer_calls == []
+
+
+@pytest.mark.asyncio
+async def test_tick_o3_prompt_includes_allowlist(
+    goals_dir: Path, incidents_dir: Path, fixed_now: datetime, monkeypatch
+) -> None:
+    """The cfg's docker_restart_allowlist is threaded into the O3 prompt."""
+    from datetime import timedelta
+
+    captured: dict[str, str] = {}
+
+    async def _capture_call(prompt, *, role="ops-agent", model=None, timeout_s=None):
+        captured["prompt"] = prompt
+        return CognitionCall(
+            stdout='{"action": "noop", "reasoning": "x"}',
+            model="stub",
+            latency_ms=1,
+            argv_head="stub",
+        )
+
+    monkeypatch.setattr("ops_agent.main._utcnow", lambda: fixed_now)
+    monkeypatch.setattr("ops_agent.main.call_claude", _capture_call)
+    _write_verifying_stall_goal(
+        goals_dir,
+        "stalled",
+        phase="verifying",
+        last_progress_at=fixed_now - timedelta(hours=6),
+    )
+
+    cfg = OpsConfig(
+        goals_dir=goals_dir,
+        incidents_dir=incidents_dir,
+        poll_interval_s=1.0,
+        dedup_window_s=86400.0,
+        docker_restart_allowlist=("compose-devclaw-mcp-1", "compose-notify-relay-1"),
+    )
+    store = IncidentStore(incidents_dir, dedup_window_s=86400)
+    await tick(cfg, store, [VerifyingStallDetector()], _StubMCP())
+
+    assert "compose-devclaw-mcp-1" in captured["prompt"]
+    assert "compose-notify-relay-1" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_tick_runs_all_three_detectors_in_one_pass(
+    goals_dir: Path, incidents_dir: Path, fixed_now: datetime, monkeypatch
+) -> None:
+    """The detectors list arg drives a three-trigger tick.
+
+    Stages an O1-firing goal, an O2-firing goal, AND an O3-firing goal in
+    the same goals dir, asserts all three incidents land in one tick
+    with the right action dispatched per trigger.
+    """
+    import os
+    from datetime import timedelta
+
+    async def _routing_call(prompt, *, role="ops-agent", model=None, timeout_s=None):
+        if "no-progress watchdog" in prompt:
+            return CognitionCall(
+                stdout='{"action": "evaluate_goal", "reasoning": "kick it"}',
+                model="stub",
+                latency_ms=1,
+                argv_head="stub",
+            )
+        if "no-steering watchdog" in prompt:
+            return CognitionCall(
+                stdout='{"action": "steer_goal", "message": "re-check", "reasoning": "drifted"}',
+                model="stub",
+                latency_ms=1,
+                argv_head="stub",
+            )
+        if "verifying-stall watchdog" in prompt:
+            return CognitionCall(
+                stdout=(
+                    '{"action": "docker_restart", "service_name": "compose-devclaw-mcp-1", '
+                    '"reasoning": "frozen"}'
+                ),
+                model="stub",
+                latency_ms=1,
+                argv_head="stub",
+            )
+        return CognitionCall(
+            stdout='{"action": "noop", "reasoning": "x"}',
+            model="stub",
+            latency_ms=1,
+            argv_head="stub",
+        )
+
+    monkeypatch.setattr("ops_agent.main._utcnow", lambda: fixed_now)
+    monkeypatch.setattr("ops_agent.main.call_claude", _routing_call)
+
+    spawn_calls: list[tuple] = []
+
+    class _FakeProc:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (b"ok\n", b"")
+
+    async def _fake_create(*args, **kwargs):
+        spawn_calls.append(args)
+        return _FakeProc()
+
+    import asyncio as _asyncio
+
+    monkeypatch.setattr(_asyncio, "create_subprocess_exec", _fake_create)
+
+    # O1 fixture (uses existing write_goal helper) — phase explicitly not in
+    # the O3 stall set, so it lights up O1 alone.
+    write_goal(goals_dir, "stuck", no_progress_notified=True, phase="executing")
+    # O2 fixture (executing, drifting inbox).
+    o2 = goals_dir / "drifty"
+    o2.mkdir()
+    (o2 / "goal.yaml").write_text("objective: drift\ncadence: 1d\n")
+    (o2 / "STATUS.md").write_text("---\nphase: executing\n---\n\n# s\n")
+    inbox = o2 / "inbox.md"
+    inbox.write_text("# inbox\n")
+    past = (fixed_now - timedelta(hours=30)).timestamp()
+    os.utime(inbox, (past, past))
+    # O3 fixture (verifying-stall).
+    _write_verifying_stall_goal(
+        goals_dir,
+        "stalled",
+        phase="verifying",
+        last_progress_at=fixed_now - timedelta(hours=6),
+    )
+
+    store = IncidentStore(incidents_dir, dedup_window_s=86400)
+    mcp = _StubMCP()
+
+    written = await tick(
+        _cfg(goals_dir, incidents_dir),
+        store,
+        [NoProgressDetector(), NoSteeringDetector(), VerifyingStallDetector()],
+        mcp,
+    )
+
+    assert written == 3
+    # L1 MCP called for the O1 incident, L2 MCP called for the O2 incident.
+    assert mcp.calls == ["stuck"]
+    assert mcp.steer_calls == [("drifty", "re-check")]
+    # Docker subprocess called for the O3 incident.
+    assert spawn_calls == [("docker", "restart", "compose-devclaw-mcp-1")]

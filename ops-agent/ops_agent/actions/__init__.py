@@ -1,9 +1,13 @@
 """Action layer — the small set of side effects ops-agent is authorized to
-perform on devclaw, one module per authority level.
+perform on devclaw or its surrounding infra, one module per authority level.
 
-ops-PR2 shipped L1 (:mod:`.evaluate_goal`). ops-PR3 adds L2
-(:mod:`.steer_goal` — inbox injection on drifting goals). L3
-(devclaw-bug-fix-ticket) stays deferred — see
+ops-PR2 shipped L1 (:mod:`.evaluate_goal`). ops-PR3 added L2
+(:mod:`.steer_goal` — inbox injection on drifting goals). ops-PR4 adds
+:mod:`.docker_restart` — an *infra*-tier action (not L3): it doesn't speak
+MCP at all, it shells out to the host docker socket to restart a strictly
+allowlisted compose service. Used when the verifying-stall playbook
+decides the goal is wedged on infrastructure (devclaw-mcp frozen) rather
+than on direction. L3 (devclaw-bug-fix-ticket) stays deferred — see
 ``~/memory/projects/devclaw/plan.md``.
 
 Each action returns an :class:`ActionOutcome` regardless of success / failure
@@ -16,11 +20,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .docker_restart import perform_docker_restart
 from .evaluate_goal import perform_evaluate_goal
 from .steer_goal import perform_steer_goal
 
 __all__ = [
     "ActionOutcome",
+    "perform_docker_restart",
     "perform_evaluate_goal",
     "perform_steer_goal",
     "outcome_to_dict",

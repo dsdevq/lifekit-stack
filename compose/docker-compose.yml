@@ -571,6 +571,10 @@ services:
       OPS_AGENT_DEVCLAW_MCP_URL: ${OPS_AGENT_DEVCLAW_MCP_URL:-http://devclaw-mcp:8000/mcp}
       OPS_AGENT_DEVCLAW_MCP_TOKEN: ${DEVCLAW_TOKEN:-}
       OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S: ${OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S:-30}
+      # ops-PR4 — O3 (verifying-stall) + docker_restart action knobs.
+      OPS_AGENT_VERIFYING_STALL_HOURS: ${OPS_AGENT_VERIFYING_STALL_HOURS:-4}
+      OPS_AGENT_DOCKER_RESTART_ALLOWLIST: ${OPS_AGENT_DOCKER_RESTART_ALLOWLIST:-compose-devclaw-mcp-1}
+      OPS_AGENT_DOCKER_TIMEOUT_S: ${OPS_AGENT_DOCKER_TIMEOUT_S:-30}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Devclaw's goal store lives in the shared devclaw-state volume at
@@ -595,6 +599,13 @@ services:
       # are required for the SDK to recognize the Pro subscription session.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude:ro
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json:ro
+      # Host docker socket — REQUIRED for the docker_restart action (ops-PR4).
+      # Grants effective root on the host. Mitigations: action wraps the
+      # `docker restart` CLI only; service name is strictly allowlisted via
+      # OPS_AGENT_DOCKER_RESTART_ALLOWLIST (default: just devclaw-mcp); no
+      # other docker subcommands are reachable from the codepath; the
+      # no-new-privileges + cap_drop above stay in force.
+      - /var/run/docker.sock:/var/run/docker.sock
     cap_drop:
       - NET_RAW
       - NET_ADMIN
