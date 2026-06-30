@@ -16,11 +16,17 @@ FROM node:22-trixie
 # ---- system deps ----------------------------------------------------------
 # python3 + venv: the daemon itself.
 # (Node.js comes from the base image for the `claude` CLI npm install below.)
+# docker.io: just the CLI binary (we never run the daemon — we talk to the
+# host's docker via the bind-mounted socket). Needed by the ops-PR4
+# docker_restart action; without it the subprocess wrapper errors with
+# "exec: docker: executable file not found in $PATH" (caught in prod
+# 2026-06-30 immediately after the ops-PR4 deploy).
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 python3-venv python3-pip \
       ca-certificates \
+      docker.io \
  && rm -rf /var/lib/apt/lists/*
 
 # ---- claude CLI (npm-installed globally) ----------------------------------

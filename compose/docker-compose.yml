@@ -546,6 +546,14 @@ services:
     image: ops-agent:local
     depends_on:
       - devclaw-mcp
+    # group_add: grant the non-root `node` user (uid 1000) access to the host
+    # docker socket. Required by the ops-PR4 docker_restart action; without
+    # this the socket is readable only by root + the host docker group, and
+    # the subprocess wrapper errors with "permission denied". Mirrors the
+    # devclaw-mcp pattern; the GID must match the host's docker group (990
+    # on lifekit-vps, 999 on most Debian installs — override via env).
+    group_add:
+      - "${LIFEKIT_DOCKER_GID:-999}"
     deploy:
       resources:
         limits:
