@@ -481,6 +481,13 @@ services:
       # Inherit Claude Code OAuth from the same files the gateway uses.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # The vault — same pattern openclaw-cli / openclaw-gateway use. Lets the
+      # trend detector persist harness-self retrospectives to
+      # ~/memory/projects/devclaw/trends.md (Path.home() inside the container
+      # resolves to /home/node) and read its own plan.md when reflecting.
+      # Without this mount the harness-self file lands in the container's
+      # ephemeral writable layer and is lost on restart.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
       # gh CLI auth so the goal layer can clone PRIVATE repos and open PRs.
       # Same host creds the gateway uses (`gh auth login` as lifekit). Pairs
       # with the GIT_CONFIG_* credential-helper env above.
@@ -542,7 +549,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          # `claude --print --model sonnet` (cognition pass) needs ~1GB headroom;
+          # 512m caused SIGKILL (-9) on every tick on lifekit-vps after the
+          # ops-PR2 deploy. 2GB matches devclaw-mcp's own slice (which runs the
+          # same CLI under the same OAuth session).
+          memory: 2g
     environment:
       OPS_AGENT_GOALS_DIR: /data/goals
       OPS_AGENT_INCIDENTS_DIR: /data/incidents
@@ -570,6 +581,14 @@ services:
       # Incident output dir — bind-mounted from the host so the owner can
       # browse incidents/log.md from their SSHFS session without needing to
       # docker exec in.
+      #
+      # NOTE: the host source dir MUST exist before `docker compose up`.
+      # Docker will silently bind-mount a non-existent host path as a phantom
+      # mount (link count 0); every write inside the container then fails with
+      # FileNotFoundError. Bit us 2026-06-30 — 10 hours of crashed ticks
+      # before the host dir was created. On a fresh deploy:
+      #   sudo mkdir -p /srv/memory/projects/ops-agent
+      #   sudo chown 1000:1000 /srv/memory/projects/ops-agent
       - ${LIFEKIT_OPS_AGENT_DIR:-/srv/memory/projects/ops-agent}:/data/incidents
       # Claude CLI session creds — READ-ONLY. Same pattern as devclaw-mcp
       # and openclaw-gateway. Both ~/.claude and the sibling .claude.json
