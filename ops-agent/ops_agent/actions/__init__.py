@@ -22,12 +22,14 @@ from typing import Any
 
 from .docker_restart import perform_docker_restart
 from .evaluate_goal import perform_evaluate_goal
+from .open_devclaw_fix_bug import perform_open_devclaw_fix_bug
 from .steer_goal import perform_steer_goal
 
 __all__ = [
     "ActionOutcome",
     "perform_docker_restart",
     "perform_evaluate_goal",
+    "perform_open_devclaw_fix_bug",
     "perform_steer_goal",
     "outcome_to_dict",
 ]

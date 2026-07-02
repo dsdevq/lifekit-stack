@@ -299,21 +299,86 @@ def test_client_exposes_only_authorized_tools() -> None:
     """Load-bearing boundary: client surface MUST stay narrow to the PR's authority.
 
     ops-PR2 authorized ``evaluate_goal``; ops-PR3 escalated to also include
-    ``steer_goal``. Any further tool (``cancel_goal``, phase transitions,
-    devclaw-bug-fix surfaces) stays explicitly forbidden — if a future PR
-    adds another MCP method to this class without updating this allowlist
-    the test fails, forcing a deliberate review of the authority escalation.
+    ``steer_goal``; ops-PR5 escalates to also include ``fix_bug`` (L3 — the
+    action layer gates it behind ``OPS_AGENT_L3_ENABLED`` so surface access
+    alone doesn't fire a PR).  Any further tool (``cancel_goal``, phase
+    transitions, ``implement_feature``) stays explicitly forbidden — if a
+    future PR adds another MCP method without updating this allowlist the
+    test fails, forcing a deliberate review of the authority escalation.
     """
     public_async_methods = {
         name
         for name in dir(DevclawMCPClient)
         if not name.startswith("_") and callable(getattr(DevclawMCPClient, name))
     }
-    # Allowed surface: the two tools shipped through ops-PR3 + lifecycle helpers.
+    # Allowed surface: the tools shipped through ops-PR5 + lifecycle helpers.
     assert "evaluate_goal" in public_async_methods
     assert "steer_goal" in public_async_methods
-    # Explicitly assert the tools that remain DEFERRED beyond ops-PR3 are absent.
-    forbidden = {"cancel_goal", "fix_bug", "implement_feature", "answer_unknowns"}
+    assert "fix_bug" in public_async_methods
+    # Explicitly assert the tools that remain DEFERRED beyond ops-PR5 are absent.
+    forbidden = {"cancel_goal", "implement_feature", "answer_unknowns"}
     assert public_async_methods.isdisjoint(
         forbidden
     ), f"DevclawMCPClient leaked deferred tools: {public_async_methods & forbidden}"
+
+
+# ---- fix_bug (L3 surface, ops-PR5) ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fix_bug_returns_task_id() -> None:
+    result_payload = {"task_id": "tid-abc", "status": "pending"}
+    stub = _StubClient(response=_ok_response(result_payload))
+    client = DevclawMCPClient(url="http://x/mcp", http_client=stub)
+
+    out = await client.fix_bug(
+        workspace_dir="/repos/devclaw",
+        description="fix the eval truncation bug",
+    )
+    assert out == result_payload
+    body = stub.posts[0]["json"]
+    assert body["method"] == "tools/call"
+    assert body["params"]["name"] == "fix_bug"
+    args = body["params"]["arguments"]
+    assert args["workspace_dir"] == "/repos/devclaw"
+    assert args["description"] == "fix the eval truncation bug"
+    assert args["open_pr"] is True  # default the client sends
+
+
+@pytest.mark.asyncio
+async def test_fix_bug_forwards_optional_kwargs() -> None:
+    stub = _StubClient(response=_ok_response({"task_id": "t", "status": "pending"}))
+    client = DevclawMCPClient(http_client=stub)
+
+    await client.fix_bug(
+        workspace_dir="/repos/x",
+        description="fix",
+        open_pr=False,
+        verify_cmd="pytest -q",
+        notify_url="https://example.invalid/notify",
+    )
+    args = stub.posts[0]["json"]["params"]["arguments"]
+    assert args["open_pr"] is False
+    assert args["verify_cmd"] == "pytest -q"
+    assert args["notify_url"] == "https://example.invalid/notify"
+
+
+@pytest.mark.asyncio
+async def test_fix_bug_rejects_empty_workspace_dir() -> None:
+    stub = _StubClient()
+    client = DevclawMCPClient(http_client=stub)
+    with pytest.raises(MCPClientError) as excinfo:
+        await client.fix_bug(workspace_dir="", description="fix")
+    assert excinfo.value.reason == "protocol"
+    # never touched the wire
+    assert stub.posts == []
+
+
+@pytest.mark.asyncio
+async def test_fix_bug_rejects_empty_description() -> None:
+    stub = _StubClient()
+    client = DevclawMCPClient(http_client=stub)
+    with pytest.raises(MCPClientError) as excinfo:
+        await client.fix_bug(workspace_dir="/repos/x", description="")
+    assert excinfo.value.reason == "protocol"
+    assert stub.posts == []

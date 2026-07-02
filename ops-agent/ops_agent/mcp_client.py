@@ -178,6 +178,52 @@ class DevclawMCPClient:
             {"goal_id": goal_id, "message": message},
         )
 
+    async def fix_bug(
+        self,
+        workspace_dir: str,
+        description: str,
+        *,
+        open_pr: bool = True,
+        verify_cmd: str | None = None,
+        notify_url: str | None = None,
+    ) -> dict[str, Any]:
+        """L3 action — file a fix_bug task against a workspace (typically
+        devclaw's own repo when the classifier says the incident is a
+        devclaw-side defect).
+
+        Maps onto devclaw's ``fix_bug(workspace_dir, description, ...)`` MCP
+        tool (see ``devclaw/server/tools.py``). Returns the task_id + initial
+        status.
+
+        Load-bearing authority note (see the module-level boundary contract):
+        adding this method escalates the ops-agent's surface from L2
+        (inbox injection) to L3 (opening PRs against devclaw itself). The
+        L3 action layer (``ops_agent.actions.open_devclaw_fix_bug``) gates
+        every call on ``OPS_AGENT_L3_ENABLED``, defaulting OFF, so this
+        method cannot fire without a deliberate opt-in during the
+        calibration window the plan calls out.
+        """
+        if not workspace_dir:
+            raise MCPClientError(
+                reason="protocol",
+                message="fix_bug requires non-empty workspace_dir",
+            )
+        if not description:
+            raise MCPClientError(
+                reason="protocol",
+                message="fix_bug requires non-empty description",
+            )
+        arguments: dict[str, Any] = {
+            "workspace_dir": workspace_dir,
+            "description": description,
+            "open_pr": bool(open_pr),
+        }
+        if verify_cmd:
+            arguments["verify_cmd"] = verify_cmd
+        if notify_url:
+            arguments["notify_url"] = notify_url
+        return await self._call_tool("fix_bug", arguments)
+
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """JSON-RPC ``tools/call`` wrapper.
 
