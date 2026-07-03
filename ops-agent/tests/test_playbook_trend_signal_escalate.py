@@ -41,9 +41,15 @@ def test_prompt_falls_back_when_no_proposed_action() -> None:
     """An entry without a Proposed action must still render — the playbook
     surfaces the absence to the model so it doesn't hallucinate one."""
     p = build_trend_signal_escalate_prompt(
-        goal_id="g", objective="", signal_id="D4", category="staleness",
-        repeat_count=4, first_fired="2026-06-30", latest_fired="2026-07-03",
-        threshold=3, proposed_action="",
+        goal_id="g",
+        objective="",
+        signal_id="D4",
+        category="staleness",
+        repeat_count=4,
+        first_fired="2026-06-30",
+        latest_fired="2026-07-03",
+        threshold=3,
+        proposed_action="",
         detected_at="2026-07-03T00:00:00+00:00",
     )
     assert "the retrospective did not suggest one" in p

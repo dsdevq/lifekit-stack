@@ -97,10 +97,15 @@ def _parse_trend_entries(text: str) -> list[TrendEntry]:
         # the emptiness to decide whether the retrospective suggested a fix.
         if raw_action.startswith("_(") or raw_action.lower().startswith("(none"):
             raw_action = ""
-        entries.append(TrendEntry(
-            date=entry_date, signal_id=signal_id, category=category,
-            body=body, proposed_action=raw_action,
-        ))
+        entries.append(
+            TrendEntry(
+                date=entry_date,
+                signal_id=signal_id,
+                category=category,
+                body=body,
+                proposed_action=raw_action,
+            )
+        )
     return entries
 
 
@@ -128,7 +133,7 @@ def _longest_consecutive_streaks(entries: Iterable[TrendEntry]) -> dict[str, Tre
         best_last = sorted_dates[0]
         cur_len = 1
         cur_first = sorted_dates[0]
-        for prev, nxt in zip(sorted_dates, sorted_dates[1:]):
+        for prev, nxt in zip(sorted_dates, sorted_dates[1:], strict=False):
             if (nxt - prev).days == 1:
                 cur_len += 1
             else:
@@ -175,15 +180,10 @@ def _iter_goal_dirs(goals_dir: Path) -> Iterable[Path]:
     safely co-locatable in tests."""
     if not goals_dir.exists():
         return []
-    return (
-        p for p in sorted(goals_dir.iterdir())
-        if p.is_dir() and not p.name.startswith(".")
-    )
+    return (p for p in sorted(goals_dir.iterdir()) if p.is_dir() and not p.name.startswith("."))
 
 
-def _resolve_trends_path(
-    workspace_dir: str, workspaces_root: Path | None
-) -> Path | None:
+def _resolve_trends_path(workspace_dir: str, workspaces_root: Path | None) -> Path | None:
     """Map a goal's ``workspace_dir`` (as devclaw writes it — the CONTAINER
     path visible to the devclaw process) into a path the ops-agent can read.
 
@@ -267,12 +267,14 @@ class TrendSignalRepeatDetector:
                         f"|repeat_count={streak.repeat_count}"
                     ),
                 }
-                incidents.append(Incident(
-                    trigger=self.trigger,
-                    goal_id=goal_dir.name,
-                    detected_at=now,
-                    payload=payload,
-                ))
+                incidents.append(
+                    Incident(
+                        trigger=self.trigger,
+                        goal_id=goal_dir.name,
+                        detected_at=now,
+                        payload=payload,
+                    )
+                )
         return incidents
 
 
