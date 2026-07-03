@@ -379,7 +379,16 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          # 3g (raised from 1g on 2026-07-03) — devclaw spawns multiple
+          # concurrent `claude --print` subprocesses per tick (planner,
+          # decomposer, trend-detector, evaluator). Each Node.js Claude CLI
+          # instance is 200-400MB during a call; 2-3 in parallel plus
+          # devclaw's ~250MB base easily exceeds 1g and the kernel OOM
+          # killer SIGKILLs whichever subprocess loses. See closeloop-mission
+          # first-tick incident 2026-07-03T11:37Z: trend-detector + planner
+          # both exited -9 at 3-7s after spawn. VPS has 15g total; 3g is
+          # a comfortable ceiling for concurrent cognition without being wasteful.
+          memory: 3g
     depends_on:
       - openclaw-gateway
     # group_add: grant the non-root `node` user access to the host docker
