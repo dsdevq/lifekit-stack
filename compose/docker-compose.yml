@@ -583,6 +583,14 @@ services:
       OPS_AGENT_VERIFYING_STALL_HOURS: ${OPS_AGENT_VERIFYING_STALL_HOURS:-4}
       OPS_AGENT_DOCKER_RESTART_ALLOWLIST: ${OPS_AGENT_DOCKER_RESTART_ALLOWLIST:-compose-devclaw-mcp-1}
       OPS_AGENT_DOCKER_TIMEOUT_S: ${OPS_AGENT_DOCKER_TIMEOUT_S:-30}
+      # ops-PR6 — O4 (trend-signal-repeat) consumer. Ops-agent tails each
+      # goal's <workspace>/.devclaw/trends.md (RO mount below) and emits an
+      # incident when devclaw's own trend detector fires the same signal on
+      # N consecutive daily runs. Threshold matches the field-validated
+      # 2026-07-02 self-escalation. Unset OPS_AGENT_WORKSPACES_DIR → O4
+      # gracefully no-ops (safe default before the mount is added).
+      OPS_AGENT_WORKSPACES_DIR: /data/workspaces
+      OPS_AGENT_TREND_REPEAT_THRESHOLD: ${OPS_AGENT_TREND_REPEAT_THRESHOLD:-3}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Devclaw's goal store lives in the shared devclaw-state volume at
@@ -590,6 +598,11 @@ services:
       # Mount the same volume here READ-ONLY — the boundary contract is that
       # ops-agent never mutates devclaw substrates directly.
       - devclaw-state:/data/devclaw-state:ro
+      # Devclaw's workspaces host dir — RO. Enables O4 to read each goal's
+      # <workspace>/.devclaw/trends.md. Same host path devclaw-mcp bind-
+      # mounts RW above (LIFEKIT_DEVCLAW_WORKSPACES); here it's RO because
+      # the ops-agent never mutates workspace state.
+      - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/data/workspaces:ro
       # Incident output dir — bind-mounted from the host so the owner can
       # browse incidents/log.md from their SSHFS session without needing to
       # docker exec in.

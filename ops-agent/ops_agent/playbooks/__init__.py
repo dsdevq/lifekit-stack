@@ -26,6 +26,10 @@ from .stuck_goal_evaluate import (
     build_stuck_goal_prompt,
     parse_stuck_goal_decision,
 )
+from .trend_signal_escalate import (
+    build_trend_signal_escalate_prompt,
+    parse_trend_signal_escalate_decision,
+)
 from .verifying_stall_unblock import (
     VerifyingStallDecision,
     build_verifying_stall_prompt,
@@ -38,8 +42,10 @@ __all__ = [
     "VerifyingStallDecision",
     "build_drifting_goal_prompt",
     "build_stuck_goal_prompt",
+    "build_trend_signal_escalate_prompt",
     "build_verifying_stall_prompt",
     "parse_drifting_goal_decision",
     "parse_stuck_goal_decision",
+    "parse_trend_signal_escalate_decision",
     "parse_verifying_stall_decision",
 ]

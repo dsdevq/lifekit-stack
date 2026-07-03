@@ -36,6 +36,18 @@ class OpsConfig:
     # Subprocess timeout (seconds) for the `docker restart` invocation.
     # Bounded so a hung docker socket can't wedge a tick.
     docker_timeout_s: float = 30.0
+    # O4 (trend-signal-repeat) — mounted RO from the host workspaces dir so
+    # the detector can read <workspace>/.devclaw/trends.md per goal. When
+    # unset, O4 gracefully no-ops (no incident emitted, no crash). Default
+    # matches the compose mount added alongside this row; systemd deploys
+    # can override.
+    workspaces_dir: Path | None = None
+    # O4 threshold — number of consecutive daily fires on the same signal
+    # before O4 emits an incident. Default 3 matches the field-validated
+    # 2026-07-02 escalation (R2 self-escalated on day 3 across four
+    # closeloop-family goals). ≤1 is treated as 2 in the detector so a
+    # single fire never counts as a "streak."
+    trend_repeat_threshold: int = 3
 
 
 def _env_path(name: str, default: str) -> Path:
@@ -53,6 +65,28 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number, got {raw!r}") from exc
+
+
+def _env_optional_path(name: str) -> Path | None:
+    """Return a resolved Path when the env var is set + non-empty, else None.
+    Used for optional mounts (e.g. workspaces_dir for O4): when the operator
+    hasn't added the compose mount, the detector should silently no-op rather
+    than crash on a missing directory."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+def _env_int(name: str, default: int) -> int:
+    """Same tolerance as _env_float, but coerced to int for count-based flags."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
 
 
 def _env_csv_tuple(name: str, default: str) -> tuple[str, ...]:
@@ -80,6 +114,10 @@ def load_config() -> OpsConfig:
       OPS_AGENT_VERIFYING_STALL_HOURS    — O3 watchdog threshold (default 4h)
       OPS_AGENT_DOCKER_RESTART_ALLOWLIST — CSV of restartable services
       OPS_AGENT_DOCKER_TIMEOUT_S         — bound on `docker restart` subprocess
+      OPS_AGENT_WORKSPACES_DIR           — RO mount of the host workspaces
+                                           volume; enables O4 trend-signal
+                                           consumer (unset → O4 no-ops)
+      OPS_AGENT_TREND_REPEAT_THRESHOLD   — O4 consecutive-day threshold (def 3)
     """
     return OpsConfig(
         goals_dir=_env_path("OPS_AGENT_GOALS_DIR", "~/memory/goals"),
@@ -91,4 +129,6 @@ def load_config() -> OpsConfig:
             "OPS_AGENT_DOCKER_RESTART_ALLOWLIST", "compose-devclaw-mcp-1"
         ),
         docker_timeout_s=_env_float("OPS_AGENT_DOCKER_TIMEOUT_S", 30.0),
+        workspaces_dir=_env_optional_path("OPS_AGENT_WORKSPACES_DIR"),
+        trend_repeat_threshold=_env_int("OPS_AGENT_TREND_REPEAT_THRESHOLD", 3),
     )
