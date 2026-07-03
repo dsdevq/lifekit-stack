@@ -23,11 +23,20 @@ def write_goal(
     no_progress_notified: bool = False,
     last_progress_at: str | None = None,
     last_tick_at: str | None = None,
+    workspace_dir: str | None = None,
 ) -> Path:
-    """Create a goal folder with the frontmatter shape devclaw writes."""
+    """Create a goal folder with the frontmatter shape devclaw writes.
+
+    ``workspace_dir`` when provided is added to goal.yaml verbatim — matches
+    the field devclaw stamps at goal creation (see devclaw/goal/store.py's
+    write_goal_yaml). Used by O4 fixtures that need the detector to resolve
+    a per-goal workspace path."""
     goal_dir = goals_dir / goal_id
     goal_dir.mkdir(parents=True, exist_ok=True)
-    (goal_dir / "goal.yaml").write_text(f"objective: {objective}\ncadence: 1d\n")
+    yaml_lines = [f"objective: {objective}", "cadence: 1d"]
+    if workspace_dir is not None:
+        yaml_lines.append(f"workspace_dir: {workspace_dir}")
+    (goal_dir / "goal.yaml").write_text("\n".join(yaml_lines) + "\n")
     fm_lines = [
         "---",
         f"phase: {phase}",

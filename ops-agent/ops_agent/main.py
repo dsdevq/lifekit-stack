@@ -46,7 +46,12 @@ from . import actions, playbooks
 from .actions import ActionOutcome, outcome_to_dict
 from .cognition import CognitionError, call_claude
 from .config import OpsConfig, load_config
-from .detectors import NoProgressDetector, NoSteeringDetector, VerifyingStallDetector
+from .detectors import (
+    NoProgressDetector,
+    NoSteeringDetector,
+    TrendSignalRepeatDetector,
+    VerifyingStallDetector,
+)
 from .incident import Incident, IncidentStore
 from .mcp_client import DevclawMCPClient
 
@@ -109,6 +114,19 @@ def _build_prompt_for(incident: Incident, cfg: OpsConfig) -> str:
             threshold_hours=threshold_hours,
             allowlisted_services=cfg.docker_restart_allowlist,
         )
+    if incident.trigger == "O4":
+        return playbooks.build_trend_signal_escalate_prompt(
+            goal_id=incident.goal_id,
+            objective=str(incident.payload.get("objective", "")),
+            signal_id=str(incident.payload.get("signal_id", "")),
+            category=str(incident.payload.get("category", "")),
+            repeat_count=int(incident.payload.get("repeat_count", 0)),
+            first_fired=str(incident.payload.get("first_fired", "")),
+            latest_fired=str(incident.payload.get("latest_fired", "")),
+            threshold=int(incident.payload.get("threshold", cfg.trend_repeat_threshold)),
+            proposed_action=str(incident.payload.get("proposed_action", "")),
+            detected_at=incident.detected_at.isoformat(timespec="seconds"),
+        )
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
@@ -120,6 +138,8 @@ def _parse_decision_for(incident: Incident, raw: str) -> PlaybookDecision:
         return playbooks.parse_drifting_goal_decision(raw)
     if incident.trigger == "O3":
         return playbooks.parse_verifying_stall_decision(raw)
+    if incident.trigger == "O4":
+        return playbooks.parse_trend_signal_escalate_decision(raw)
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
@@ -134,6 +154,12 @@ def _noop_decision_for(incident: Incident, reasoning: str) -> PlaybookDecision:
     if incident.trigger == "O3":
         return playbooks.VerifyingStallDecision(
             action="noop", service_name="", reasoning=reasoning, raw_response=""
+        )
+    if incident.trigger == "O4":
+        # O4 reuses the DriftingGoalDecision shape (steer_goal | noop with
+        # a message). Same dispatch path as O2 — no new action type.
+        return playbooks.DriftingGoalDecision(
+            action="noop", message="", reasoning=reasoning, raw_response=""
         )
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
@@ -435,7 +461,15 @@ async def run_loop(cfg: OpsConfig, stop: asyncio.Event) -> None:
     store = IncidentStore(cfg.incidents_dir, dedup_window_s=cfg.dedup_window_s)
     # Register every detector here — order is significant only for the
     # order incidents appear in the log on a tick that lights up both.
-    detectors = [NoProgressDetector(), NoSteeringDetector(), VerifyingStallDetector()]
+    detectors: list[Any] = [
+        NoProgressDetector(),
+        NoSteeringDetector(),
+        VerifyingStallDetector(),
+        TrendSignalRepeatDetector(
+            threshold=cfg.trend_repeat_threshold,
+            workspaces_root=cfg.workspaces_dir,
+        ),
+    ]
     _log.info(
         "ops-agent starting goals_dir=%s incidents_dir=%s poll=%.1fs detectors=%s",
         cfg.goals_dir,
