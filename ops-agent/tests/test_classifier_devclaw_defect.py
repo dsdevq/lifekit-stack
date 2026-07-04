@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from ops_agent.classifiers import classify_devclaw_defect
 
 
@@ -56,7 +54,8 @@ def test_returns_none_when_status_and_log_are_absent(tmp_path):
 
 def test_returns_none_on_happy_verdict(tmp_path):
     _write_goal(
-        tmp_path, "happy",
+        tmp_path,
+        "happy",
         status_frontmatter={"last_eval_verdict": "on_track", "last_eval_note": "chugging along"},
         log="implement_feature abc123 → done — PR https://x\n",
     )
@@ -68,10 +67,11 @@ def test_returns_none_on_happy_verdict(tmp_path):
 
 def test_eval_truncation_on_review_cut_off_marker(tmp_path):
     _write_goal(
-        tmp_path, "trunc1",
+        tmp_path,
+        "trunc1",
         status_frontmatter={
             "last_eval_verdict": "needs_human",
-            "last_eval_note": "\"review cut off — retry needed\"",
+            "last_eval_note": '"review cut off — retry needed"',
         },
     )
     hit = classify_devclaw_defect(goal_id="trunc1", goals_dir=tmp_path)
@@ -80,7 +80,8 @@ def test_eval_truncation_on_review_cut_off_marker(tmp_path):
 
 def test_eval_truncation_on_empty_note_with_stalled_verdict(tmp_path):
     _write_goal(
-        tmp_path, "trunc2",
+        tmp_path,
+        "trunc2",
         status_frontmatter={"last_eval_verdict": "stalled", "last_eval_note": ""},
     )
     hit = classify_devclaw_defect(goal_id="trunc2", goals_dir=tmp_path)
@@ -90,7 +91,8 @@ def test_eval_truncation_on_empty_note_with_stalled_verdict(tmp_path):
 def test_eval_truncation_ignores_empty_note_on_happy_verdict(tmp_path):
     # A blank note on `on_track` is normal — no defect implied.
     _write_goal(
-        tmp_path, "trunc3",
+        tmp_path,
+        "trunc3",
         status_frontmatter={"last_eval_verdict": "on_track", "last_eval_note": ""},
     )
     assert classify_devclaw_defect(goal_id="trunc3", goals_dir=tmp_path) is None
@@ -101,10 +103,11 @@ def test_eval_truncation_ignores_empty_note_on_happy_verdict(tmp_path):
 
 def test_phantom_verdict_on_marker_with_stalled(tmp_path):
     _write_goal(
-        tmp_path, "phantom1",
+        tmp_path,
+        "phantom1",
         status_frontmatter={
             "last_eval_verdict": "stalled",
-            "last_eval_note": "\"phantom verdict — no evidence in traces\"",
+            "last_eval_note": '"phantom verdict — no evidence in traces"',
         },
     )
     hit = classify_devclaw_defect(goal_id="phantom1", goals_dir=tmp_path)
@@ -119,10 +122,11 @@ def test_phantom_verdict_silent_on_happy_verdict_with_marker(tmp_path):
     # A phantom marker in the note is not a defect if the verdict is happy —
     # never happens in practice, but confirm the guard.
     _write_goal(
-        tmp_path, "phantom2",
+        tmp_path,
+        "phantom2",
         status_frontmatter={
             "last_eval_verdict": "on_track",
-            "last_eval_note": "\"no phantom verdicts observed this run\"",
+            "last_eval_note": '"no phantom verdicts observed this run"',
         },
     )
     assert classify_devclaw_defect(goal_id="phantom2", goals_dir=tmp_path) is None
@@ -132,36 +136,42 @@ def test_phantom_verdict_silent_on_happy_verdict_with_marker(tmp_path):
 
 
 def test_planner_loop_on_three_consecutive_dispatches_no_delivery(tmp_path):
-    log = "\n".join([
-        "2026-07-04T01:00:00Z dispatched implement_feature target-A",
-        "2026-07-04T01:05:00Z dispatched implement_feature target-A",
-        "2026-07-04T01:10:00Z dispatched implement_feature target-A",
-        "2026-07-04T01:15:00Z dispatched implement_feature target-A",
-    ])
+    log = "\n".join(
+        [
+            "2026-07-04T01:00:00Z dispatched implement_feature target-A",
+            "2026-07-04T01:05:00Z dispatched implement_feature target-A",
+            "2026-07-04T01:10:00Z dispatched implement_feature target-A",
+            "2026-07-04T01:15:00Z dispatched implement_feature target-A",
+        ]
+    )
     _write_goal(tmp_path, "loop1", log=log)
     hit = classify_devclaw_defect(goal_id="loop1", goals_dir=tmp_path)
     assert hit is not None and hit.signature == "planner_loop"
 
 
 def test_planner_loop_ignores_dispatches_with_delivery_between(tmp_path):
-    log = "\n".join([
-        "dispatched implement_feature target-A",
-        "implement_feature abc → done",
-        "dispatched implement_feature target-A",
-        "implement_feature def → done",
-        "dispatched implement_feature target-A",
-    ])
+    log = "\n".join(
+        [
+            "dispatched implement_feature target-A",
+            "implement_feature abc → done",
+            "dispatched implement_feature target-A",
+            "implement_feature def → done",
+            "dispatched implement_feature target-A",
+        ]
+    )
     _write_goal(tmp_path, "loop2", log=log)
     # Each dispatch is followed by a delivery, resetting the streak.
     assert classify_devclaw_defect(goal_id="loop2", goals_dir=tmp_path) is None
 
 
 def test_planner_loop_ignores_dispatches_to_different_targets(tmp_path):
-    log = "\n".join([
-        "dispatched implement_feature target-A",
-        "dispatched implement_feature target-B",
-        "dispatched implement_feature target-C",
-    ])
+    log = "\n".join(
+        [
+            "dispatched implement_feature target-A",
+            "dispatched implement_feature target-B",
+            "dispatched implement_feature target-C",
+        ]
+    )
     _write_goal(tmp_path, "loop3", log=log)
     assert classify_devclaw_defect(goal_id="loop3", goals_dir=tmp_path) is None
 
@@ -170,11 +180,13 @@ def test_planner_loop_ignores_dispatches_to_different_targets(tmp_path):
 
 
 def test_json_parse_error_on_marker_in_log(tmp_path):
-    log = "\n".join([
-        "some benign line",
-        "cognition planner failed: expected valid JSON, got: <...>",
-        "another benign line",
-    ])
+    log = "\n".join(
+        [
+            "some benign line",
+            "cognition planner failed: expected valid JSON, got: <...>",
+            "another benign line",
+        ]
+    )
     _write_goal(tmp_path, "json1", log=log)
     hit = classify_devclaw_defect(goal_id="json1", goals_dir=tmp_path)
     assert hit is not None and hit.signature == "json_parse_error"
@@ -192,16 +204,19 @@ def test_json_parse_error_marker_various_shapes(tmp_path):
 
 def test_eval_truncation_wins_over_planner_loop_when_both_match(tmp_path):
     _write_goal(
-        tmp_path, "prio1",
+        tmp_path,
+        "prio1",
         status_frontmatter={
             "last_eval_verdict": "needs_human",
-            "last_eval_note": "\"eval truncated mid-response\"",
+            "last_eval_note": '"eval truncated mid-response"',
         },
-        log="\n".join([
-            "dispatched fix_bug T",
-            "dispatched fix_bug T",
-            "dispatched fix_bug T",
-        ]),
+        log="\n".join(
+            [
+                "dispatched fix_bug T",
+                "dispatched fix_bug T",
+                "dispatched fix_bug T",
+            ]
+        ),
     )
     hit = classify_devclaw_defect(goal_id="prio1", goals_dir=tmp_path)
     assert hit is not None and hit.signature == "eval_truncation"

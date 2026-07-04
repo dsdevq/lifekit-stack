@@ -174,7 +174,9 @@ def parse_devclaw_bug_fix_decision(raw: str) -> DevclawBugFixDecision:
     raw_stripped = (raw or "").strip()
     if not raw_stripped:
         return DevclawBugFixDecision(
-            action="noop", description="", title="",
+            action="noop",
+            description="",
+            title="",
             reasoning="empty response from cognition",
             raw_response=raw or "",
         )
@@ -182,7 +184,9 @@ def parse_devclaw_bug_fix_decision(raw: str) -> DevclawBugFixDecision:
     obj = _extract_json_object(raw_stripped)
     if obj is None:
         return DevclawBugFixDecision(
-            action="noop", description="", title="",
+            action="noop",
+            description="",
+            title="",
             reasoning=f"response was not parseable JSON: {raw_stripped[:200]!r}",
             raw_response=raw,
         )
@@ -194,7 +198,9 @@ def parse_devclaw_bug_fix_decision(raw: str) -> DevclawBugFixDecision:
 
     if action_raw not in _VALID_ACTIONS:
         return DevclawBugFixDecision(
-            action="noop", description="", title="",
+            action="noop",
+            description="",
+            title="",
             reasoning=(
                 f"unknown action {action_raw!r} — expected fix_bug or noop"
                 + (f"; model said: {reasoning}" if reasoning else "")
@@ -204,7 +210,9 @@ def parse_devclaw_bug_fix_decision(raw: str) -> DevclawBugFixDecision:
 
     if action_raw == "noop":
         return DevclawBugFixDecision(
-            action="noop", description="", title="",
+            action="noop",
+            description="",
+            title="",
             reasoning=reasoning or "(no reasoning provided)",
             raw_response=raw,
         )
@@ -212,7 +220,9 @@ def parse_devclaw_bug_fix_decision(raw: str) -> DevclawBugFixDecision:
     # action == "fix_bug" — validate the payload before we commit to an MCP call.
     if not description:
         return DevclawBugFixDecision(
-            action="noop", description="", title="",
+            action="noop",
+            description="",
+            title="",
             reasoning=(
                 "fix_bug decision came back with empty description; "
                 "coerced to noop to avoid filing an empty ticket"
@@ -222,7 +232,9 @@ def parse_devclaw_bug_fix_decision(raw: str) -> DevclawBugFixDecision:
         )
     if len(description) > _MAX_DESCRIPTION_CHARS:
         return DevclawBugFixDecision(
-            action="noop", description="", title="",
+            action="noop",
+            description="",
+            title="",
             reasoning=(
                 f"fix_bug description exceeded {_MAX_DESCRIPTION_CHARS} chars "
                 f"(got {len(description)}); coerced to noop"

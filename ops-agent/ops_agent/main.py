@@ -77,9 +77,7 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _l3_route_or_none(
-    incident: Incident, cfg: OpsConfig
-) -> DevclawDefectMatch | None:
+def _l3_route_or_none(incident: Incident, cfg: OpsConfig) -> DevclawDefectMatch | None:
     """Decide whether this incident routes to L3 (devclaw-bug-fix-ticket).
 
     L3 fires only on O2 incidents where:
@@ -231,8 +229,11 @@ def _noop_decision_for(
     if incident.trigger == "O2":
         if l3_match is not None:
             return playbooks.DevclawBugFixDecision(
-                action="noop", description="", title="",
-                reasoning=reasoning, raw_response="",
+                action="noop",
+                description="",
+                title="",
+                reasoning=reasoning,
+                raw_response="",
             )
         return playbooks.DriftingGoalDecision(
             action="noop", message="", reasoning=reasoning, raw_response=""
@@ -378,7 +379,9 @@ async def _decide_and_act(
     if l3_match is not None:
         _log.info(
             "L3 route selected goal=%s signature=%s confidence=%s",
-            incident.goal_id, l3_match.signature, l3_match.confidence,
+            incident.goal_id,
+            l3_match.signature,
+            l3_match.confidence,
         )
 
     prompt = _build_prompt_for(incident, cfg, l3_match=l3_match)

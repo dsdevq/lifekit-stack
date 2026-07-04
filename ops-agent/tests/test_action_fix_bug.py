@@ -17,20 +17,26 @@ from typing import Any
 
 import pytest
 
-from ops_agent.actions import ActionOutcome, perform_fix_bug
+from ops_agent.actions import perform_fix_bug
 from ops_agent.mcp_client import MCPClientError
 
 
 class _FakeMCP:
     """Minimal fake — records the fix_bug call args + returns a canned response."""
 
-    def __init__(self, response: dict[str, Any] | None = None, raise_err: MCPClientError | None = None) -> None:
+    def __init__(
+        self, response: dict[str, Any] | None = None, raise_err: MCPClientError | None = None
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self._response = response or {"created_goal_id": "devclaw-fix-abc123"}
         self._raise_err = raise_err
 
-    async def fix_bug(self, *, workspace_dir: str, description: str, title: str | None = None) -> dict[str, Any]:
-        self.calls.append({"workspace_dir": workspace_dir, "description": description, "title": title})
+    async def fix_bug(
+        self, *, workspace_dir: str, description: str, title: str | None = None
+    ) -> dict[str, Any]:
+        self.calls.append(
+            {"workspace_dir": workspace_dir, "description": description, "title": title}
+        )
         if self._raise_err is not None:
             raise self._raise_err
         return self._response

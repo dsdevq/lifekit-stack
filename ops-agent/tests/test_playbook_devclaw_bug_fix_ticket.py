@@ -11,14 +11,10 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from ops_agent.playbooks import (
-    DevclawBugFixDecision,
     build_devclaw_bug_fix_prompt,
     parse_devclaw_bug_fix_decision,
 )
-
 
 # ── prompt shape ───────────────────────────────────────────────────────────
 
@@ -46,9 +42,13 @@ def test_prompt_includes_devclaw_repo_path_and_signature():
 
 def test_prompt_handles_empty_objective_and_phase():
     prompt = build_devclaw_bug_fix_prompt(
-        goal_id="g1", objective="", phase="",
-        signature="planner_loop", evidence=(),
-        confidence="medium", devclaw_repo_path="/srv/devclaw",
+        goal_id="g1",
+        objective="",
+        phase="",
+        signature="planner_loop",
+        evidence=(),
+        confidence="medium",
+        devclaw_repo_path="/srv/devclaw",
         detected_at="2026-07-04T12:00:00+00:00",
     )
     assert "(no objective recorded)" in prompt
@@ -59,12 +59,21 @@ def test_prompt_handles_empty_objective_and_phase():
 
 
 def test_parse_fix_bug_with_all_fields():
-    raw = json.dumps({
-        "action": "fix_bug",
-        "title": "fix(evaluator): handle truncated cognition output",
-        "description": "Symptom: goal blocked with `review cut off` verdict. Evidence: last_eval_note contains truncation marker. Suspected file: devclaw/goal/evaluator.py. Repro: seed a fixture with a mid-response cut and re-run the eval fixture.",
-        "reasoning": "classifier hit eval_truncation with a concrete note excerpt — worth filing"
-    })
+    description = (
+        "Symptom: goal blocked with `review cut off` verdict. "
+        "Evidence: last_eval_note contains truncation marker. "
+        "Suspected file: devclaw/goal/evaluator.py. "
+        "Repro: seed a fixture with a mid-response cut and re-run the eval fixture."
+    )
+    reasoning = "classifier hit eval_truncation with a concrete note excerpt — worth filing"
+    raw = json.dumps(
+        {
+            "action": "fix_bug",
+            "title": "fix(evaluator): handle truncated cognition output",
+            "description": description,
+            "reasoning": reasoning,
+        }
+    )
     d = parse_devclaw_bug_fix_decision(raw)
     assert d.action == "fix_bug"
     assert d.title.startswith("fix(evaluator)")
@@ -73,12 +82,14 @@ def test_parse_fix_bug_with_all_fields():
 
 
 def test_parse_noop_with_reasoning():
-    raw = json.dumps({
-        "action": "noop",
-        "title": "",
-        "description": "",
-        "reasoning": "evidence too thin — signature match on a single log line"
-    })
+    raw = json.dumps(
+        {
+            "action": "noop",
+            "title": "",
+            "description": "",
+            "reasoning": "evidence too thin — signature match on a single log line",
+        }
+    )
     d = parse_devclaw_bug_fix_decision(raw)
     assert d.action == "noop"
     assert d.description == ""
@@ -86,7 +97,8 @@ def test_parse_noop_with_reasoning():
 
 
 def test_parse_extracts_json_from_prose_wrapper():
-    raw = 'Sure! Here is my decision:\n{"action":"noop","title":"","description":"","reasoning":"fine"}\nThanks.'
+    body = '{"action":"noop","title":"","description":"","reasoning":"fine"}'
+    raw = f"Sure! Here is my decision:\n{body}\nThanks."
     d = parse_devclaw_bug_fix_decision(raw)
     assert d.action == "noop"
 
@@ -117,10 +129,14 @@ def test_parse_fix_bug_with_empty_description_is_noop():
     # This is the load-bearing safety collapse — an empty description means
     # the model didn't have a specific enough diagnosis. Firing L3 on an
     # empty ticket is the worst-case behaviour.
-    raw = json.dumps({
-        "action": "fix_bug", "title": "fix: something", "description": "",
-        "reasoning": "sure why not"
-    })
+    raw = json.dumps(
+        {
+            "action": "fix_bug",
+            "title": "fix: something",
+            "description": "",
+            "reasoning": "sure why not",
+        }
+    )
     d = parse_devclaw_bug_fix_decision(raw)
     assert d.action == "noop"
     assert "empty description" in d.reasoning
@@ -128,9 +144,7 @@ def test_parse_fix_bug_with_empty_description_is_noop():
 
 def test_parse_fix_bug_with_oversized_description_is_noop():
     huge = "x" * 3000
-    raw = json.dumps({
-        "action": "fix_bug", "title": "t", "description": huge, "reasoning": "r"
-    })
+    raw = json.dumps({"action": "fix_bug", "title": "t", "description": huge, "reasoning": "r"})
     d = parse_devclaw_bug_fix_decision(raw)
     assert d.action == "noop"
     assert "exceeded" in d.reasoning
@@ -138,11 +152,14 @@ def test_parse_fix_bug_with_oversized_description_is_noop():
 
 def test_parse_fix_bug_with_oversized_title_is_truncated_not_dropped():
     long_title = "fix(x): " + ("word " * 40).strip()  # > 100 chars
-    raw = json.dumps({
-        "action": "fix_bug", "title": long_title,
-        "description": "a real description here",
-        "reasoning": "r"
-    })
+    raw = json.dumps(
+        {
+            "action": "fix_bug",
+            "title": long_title,
+            "description": "a real description here",
+            "reasoning": "r",
+        }
+    )
     d = parse_devclaw_bug_fix_decision(raw)
     assert d.action == "fix_bug"
     assert len(d.title) <= 100

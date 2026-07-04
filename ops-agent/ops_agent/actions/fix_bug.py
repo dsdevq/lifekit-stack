@@ -95,7 +95,9 @@ async def perform_fix_bug(
     except MCPClientError as exc:
         _log.warning(
             "fix_bug MCP call failed goal=%s reason=%s msg=%s",
-            triggering_goal_id, exc.reason, exc.message,
+            triggering_goal_id,
+            exc.reason,
+            exc.message,
         )
         return ActionOutcome(
             action="fix_bug",
