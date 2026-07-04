@@ -317,6 +317,6 @@ def test_client_exposes_only_authorized_tools() -> None:
     assert "fix_bug" in public_async_methods
     # Explicitly assert the tools that remain DEFERRED beyond ops-PR4 are absent.
     forbidden = {"cancel_goal", "implement_feature", "answer_unknowns"}
-    assert public_async_methods.isdisjoint(forbidden), (
-        f"DevclawMCPClient leaked deferred tools: {public_async_methods & forbidden}"
-    )
+    assert public_async_methods.isdisjoint(
+        forbidden
+    ), f"DevclawMCPClient leaked deferred tools: {public_async_methods & forbidden}"
