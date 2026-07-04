@@ -44,6 +44,7 @@ from typing import Any
 
 from . import actions, playbooks
 from .actions import ActionOutcome, outcome_to_dict
+from .classifiers import DevclawDefectMatch, classify_devclaw_defect
 from .cognition import CognitionError, call_claude
 from .config import OpsConfig, load_config
 from .detectors import (
@@ -58,8 +59,13 @@ from .mcp_client import DevclawMCPClient
 # Discriminated union of the playbook-decision types this PR routes.
 # Kept here (not in playbooks/__init__) because it's a daemon-layer concern
 # — the playbook layer itself doesn't know about cross-playbook dispatch.
+# ops-PR4 adds ``DevclawBugFixDecision`` — routed from O2 incidents when
+# the devclaw-defect classifier matches and ``cfg.l3_enabled`` is on.
 PlaybookDecision = (
-    playbooks.StuckGoalDecision | playbooks.DriftingGoalDecision | playbooks.VerifyingStallDecision
+    playbooks.StuckGoalDecision
+    | playbooks.DriftingGoalDecision
+    | playbooks.VerifyingStallDecision
+    | playbooks.DevclawBugFixDecision
 )
 
 _log = logging.getLogger("ops_agent")
@@ -71,16 +77,49 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _build_prompt_for(incident: Incident, cfg: OpsConfig) -> str:
+def _l3_route_or_none(incident: Incident, cfg: OpsConfig) -> DevclawDefectMatch | None:
+    """Decide whether this incident routes to L3 (devclaw-bug-fix-ticket).
+
+    L3 fires only on O2 incidents where:
+      1. ``cfg.l3_enabled`` is true (opt-in, off by default);
+      2. ``cfg.devclaw_repo_path`` is configured (otherwise fix_bug has
+         nowhere to file against);
+      3. the devclaw-defect classifier matches a known signature in the
+         goal's on-disk state.
+
+    Returns the classifier match on route, else None (fall through to the
+    default L2 drifting-goal-steer path). Runs at most once per incident
+    per polling cycle — both prompt-building and parsing consult this.
+    """
+    if incident.trigger != "O2":
+        return None
+    if not cfg.l3_enabled:
+        return None
+    if cfg.devclaw_repo_path is None:
+        return None
+    return classify_devclaw_defect(
+        goal_id=incident.goal_id,
+        goals_dir=cfg.goals_dir,
+    )
+
+
+def _build_prompt_for(
+    incident: Incident,
+    cfg: OpsConfig,
+    *,
+    l3_match: DevclawDefectMatch | None = None,
+) -> str:
     """Render the right playbook prompt for ``incident.trigger``.
 
-    O1 → stuck-goal-evaluate; O2 → drifting-goal-steer; O3 →
-    verifying-stall-unblock. Unknown triggers raise — that's a
-    programming bug (the detector layer is the only surface that mints
-    triggers and main wires them in).
+    O1 → stuck-goal-evaluate; O2 → drifting-goal-steer OR devclaw-bug-
+    fix-ticket (when ``l3_match`` is non-None — see :func:`_l3_route_or_none`);
+    O3 → verifying-stall-unblock; O4 → trend-signal-escalate. Unknown
+    triggers raise — that's a programming bug (the detector layer is the
+    only surface that mints triggers and main wires them in).
 
     ``cfg`` is threaded through so O3's prompt can surface the
-    docker_restart allowlist verbatim from the runtime config.
+    docker_restart allowlist verbatim from the runtime config, and so
+    the L3 prompt can surface the devclaw_repo_path verbatim.
     """
     if incident.trigger == "O1":
         return playbooks.build_stuck_goal_prompt(
@@ -92,6 +131,24 @@ def _build_prompt_for(incident: Incident, cfg: OpsConfig) -> str:
             detected_at=incident.detected_at.isoformat(timespec="seconds"),
         )
     if incident.trigger == "O2":
+        # L3 route (ops-PR4) — classifier matched a known devclaw-defect
+        # signature and L3 is enabled. Ask Claude to file a fix-PR
+        # against devclaw itself instead of steering the goal.
+        if l3_match is not None:
+            # devclaw_repo_path is guaranteed non-None on the L3 route
+            # (_l3_route_or_none checks it), but assert for the type
+            # checker + defence-in-depth.
+            assert cfg.devclaw_repo_path is not None
+            return playbooks.build_devclaw_bug_fix_prompt(
+                goal_id=incident.goal_id,
+                objective=str(incident.payload.get("objective", "")),
+                phase=str(incident.payload.get("phase", "")),
+                signature=l3_match.signature,
+                evidence=l3_match.evidence,
+                confidence=l3_match.confidence,
+                devclaw_repo_path=str(cfg.devclaw_repo_path),
+                detected_at=incident.detected_at.isoformat(timespec="seconds"),
+            )
         # Threshold is recorded by the detector so the prompt + the
         # incident folder agree on what the watchdog tripped at.
         threshold_hours = float(incident.payload.get("threshold_hours", 24.0))
@@ -130,11 +187,23 @@ def _build_prompt_for(incident: Incident, cfg: OpsConfig) -> str:
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
-def _parse_decision_for(incident: Incident, raw: str) -> PlaybookDecision:
-    """Parse a Claude response with the right playbook for ``incident.trigger``."""
+def _parse_decision_for(
+    incident: Incident,
+    raw: str,
+    *,
+    l3_match: DevclawDefectMatch | None = None,
+) -> PlaybookDecision:
+    """Parse a Claude response with the right playbook for ``incident.trigger``.
+
+    ``l3_match`` mirrors the routing decision made at prompt-build time —
+    when non-None on an O2 incident we parse against the devclaw-bug-fix
+    playbook instead of drifting-goal-steer.
+    """
     if incident.trigger == "O1":
         return playbooks.parse_stuck_goal_decision(raw)
     if incident.trigger == "O2":
+        if l3_match is not None:
+            return playbooks.parse_devclaw_bug_fix_decision(raw)
         return playbooks.parse_drifting_goal_decision(raw)
     if incident.trigger == "O3":
         return playbooks.parse_verifying_stall_decision(raw)
@@ -143,11 +212,29 @@ def _parse_decision_for(incident: Incident, raw: str) -> PlaybookDecision:
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
-def _noop_decision_for(incident: Incident, reasoning: str) -> PlaybookDecision:
-    """Build a typed noop decision for ``incident.trigger`` (used on cognition failure)."""
+def _noop_decision_for(
+    incident: Incident,
+    reasoning: str,
+    *,
+    l3_match: DevclawDefectMatch | None = None,
+) -> PlaybookDecision:
+    """Build a typed noop decision for ``incident.trigger`` (used on cognition failure).
+
+    ``l3_match`` mirrors the routing decision — on the L3 route the noop
+    fallback must be a ``DevclawBugFixDecision`` so serialisation of the
+    incident folder is trigger-shape-consistent.
+    """
     if incident.trigger == "O1":
         return playbooks.StuckGoalDecision(action="noop", reasoning=reasoning, raw_response="")
     if incident.trigger == "O2":
+        if l3_match is not None:
+            return playbooks.DevclawBugFixDecision(
+                action="noop",
+                description="",
+                title="",
+                reasoning=reasoning,
+                raw_response="",
+            )
         return playbooks.DriftingGoalDecision(
             action="noop", message="", reasoning=reasoning, raw_response=""
         )
@@ -168,6 +255,7 @@ async def _dispatch_action(
     decision: PlaybookDecision,
     incident: Incident,
     mcp: DevclawMCPClient | None,
+    cfg: OpsConfig,
 ) -> ActionOutcome | None:
     """Map a decision's ``action`` onto the right MCP call (or skip on noop).
 
@@ -203,6 +291,37 @@ async def _dispatch_action(
                 error_message="ops-agent has no MCP client configured",
             )
         return await actions.perform_steer_goal(incident.goal_id, message, mcp)
+
+    if decision.action == "fix_bug":
+        # Only DevclawBugFixDecision carries description/title — the parser
+        # coerces empty description to noop, so if we get here they're set.
+        # devclaw_repo_path is required at the config layer for the L3 route
+        # to be picked; guard again as defence in depth.
+        description = getattr(decision, "description", "")
+        title = getattr(decision, "title", "")
+        if mcp is None:
+            return ActionOutcome(
+                action="fix_bug",
+                status="failed",
+                detail={"triggering_goal_id": incident.goal_id},
+                error_reason="no_mcp_client",
+                error_message="ops-agent has no MCP client configured",
+            )
+        if cfg.devclaw_repo_path is None:
+            return ActionOutcome(
+                action="fix_bug",
+                status="failed",
+                detail={"triggering_goal_id": incident.goal_id},
+                error_reason="no_devclaw_repo_path",
+                error_message="devclaw_repo_path unset — L3 cannot fire",
+            )
+        return await actions.perform_fix_bug(
+            devclaw_repo_path=str(cfg.devclaw_repo_path),
+            description=description,
+            title=title,
+            triggering_goal_id=incident.goal_id,
+            mcp=mcp,
+        )
 
     if decision.action == "docker_restart":
         # ``service_name`` is only meaningful on a VerifyingStallDecision;
@@ -252,7 +371,20 @@ async def _decide_and_act(
         )
         return None, None, None
 
-    prompt = _build_prompt_for(incident, cfg)
+    # Decide the L3 route ONCE per incident — the classifier reads disk, so
+    # the same match is shared across prompt-build, parser, and noop-fallback.
+    # None on all non-O2 triggers and on O2 when L3 is opt-out or classifier
+    # doesn't match; the O2 default path (drifting-goal-steer) fires then.
+    l3_match = _l3_route_or_none(incident, cfg)
+    if l3_match is not None:
+        _log.info(
+            "L3 route selected goal=%s signature=%s confidence=%s",
+            incident.goal_id,
+            l3_match.signature,
+            l3_match.confidence,
+        )
+
+    prompt = _build_prompt_for(incident, cfg, l3_match=l3_match)
 
     # Persist the prompt before the cognition call — if the daemon dies
     # mid-call the prompt is still on disk for forensic review.
@@ -269,10 +401,11 @@ async def _decide_and_act(
         decision = _noop_decision_for(
             incident,
             reasoning=f"cognition_failed: {cog_err.reason} — {cog_err.message}",
+            l3_match=l3_match,
         )
         return decision, None, cog_err
 
-    decision = _parse_decision_for(incident, call_result.stdout)
+    decision = _parse_decision_for(incident, call_result.stdout, l3_match=l3_match)
     _log.info(
         "playbook decided trigger=%s goal=%s action=%s latency_ms=%s",
         incident.trigger,
@@ -281,7 +414,7 @@ async def _decide_and_act(
         call_result.latency_ms,
     )
 
-    outcome = await _dispatch_action(decision, incident, mcp)
+    outcome = await _dispatch_action(decision, incident, mcp, cfg)
     return decision, outcome, None
 
 

@@ -2,13 +2,16 @@
 perform on devclaw or its surrounding infra, one module per authority level.
 
 ops-PR2 shipped L1 (:mod:`.evaluate_goal`). ops-PR3 added L2
-(:mod:`.steer_goal` — inbox injection on drifting goals). ops-PR4 adds
-:mod:`.docker_restart` — an *infra*-tier action (not L3): it doesn't speak
-MCP at all, it shells out to the host docker socket to restart a strictly
-allowlisted compose service. Used when the verifying-stall playbook
-decides the goal is wedged on infrastructure (devclaw-mcp frozen) rather
-than on direction. L3 (devclaw-bug-fix-ticket) stays deferred — see
-``~/memory/projects/devclaw/plan.md``.
+(:mod:`.steer_goal` — inbox injection on drifting goals). Earlier ops
+work added :mod:`.docker_restart` — an *infra*-tier action (not L3): it
+doesn't speak MCP at all, it shells out to the host docker socket to
+restart a strictly allowlisted compose service. Used when the
+verifying-stall playbook decides the goal is wedged on infrastructure
+(devclaw-mcp frozen) rather than on direction. ops-PR4 now adds
+:mod:`.fix_bug` — the real L3: fire the devclaw ``fix_bug`` MCP tool
+against devclaw's OWN repo when the devclaw-defect classifier matches
+on an O2 incident. It's the most powerful action ops-agent has; gated
+behind the ``l3_enabled`` config flag + a devclaw_repo_path allowlist.
 
 Each action returns an :class:`ActionOutcome` regardless of success / failure
 so the playbook layer above can serialize the result to ``outcome.md``
@@ -22,12 +25,14 @@ from typing import Any
 
 from .docker_restart import perform_docker_restart
 from .evaluate_goal import perform_evaluate_goal
+from .fix_bug import perform_fix_bug
 from .steer_goal import perform_steer_goal
 
 __all__ = [
     "ActionOutcome",
     "perform_docker_restart",
     "perform_evaluate_goal",
+    "perform_fix_bug",
     "perform_steer_goal",
     "outcome_to_dict",
 ]

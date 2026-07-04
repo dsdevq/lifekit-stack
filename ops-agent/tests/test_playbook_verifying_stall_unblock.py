@@ -240,7 +240,7 @@ def test_parse_docker_restart_with_oversized_service_name_falls_back() -> None:
 def test_parse_docker_restart_with_invalid_pattern_falls_back() -> None:
     """Anything outside ^[A-Za-z0-9_-]+$ → noop. Belt-and-braces against
     shell-injectable payloads even though the action layer re-checks."""
-    raw = '{"action": "docker_restart", "service_name": "service; rm -rf /", ' '"reasoning": "r"}'
+    raw = '{"action": "docker_restart", "service_name": "service; rm -rf /", "reasoning": "r"}'
     d = parse_verifying_stall_decision(raw)
     assert d.action == "noop"
     assert "pattern" in d.reasoning

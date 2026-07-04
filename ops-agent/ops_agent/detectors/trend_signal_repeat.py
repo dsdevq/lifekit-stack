@@ -263,8 +263,7 @@ class TrendSignalRepeatDetector:
                     # Keeps the log honest without spamming when a signal
                     # keeps re-firing day after day for a week.
                     "dedup_key": (
-                        f"trend_signal_repeat={streak.signal_id}"
-                        f"|repeat_count={streak.repeat_count}"
+                        f"trend_signal_repeat={streak.signal_id}|repeat_count={streak.repeat_count}"
                     ),
                 }
                 incidents.append(
