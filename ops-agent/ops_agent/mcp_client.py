@@ -178,6 +178,52 @@ class DevclawMCPClient:
             {"goal_id": goal_id, "message": message},
         )
 
+    async def fix_bug(
+        self,
+        *,
+        workspace_dir: str,
+        description: str,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """L3 action — file a fix ticket against a repo via devclaw's
+        ``fix_bug`` MCP tool.
+
+        In the ops-agent L3 playbook, ``workspace_dir`` points at devclaw's
+        OWN repo — meaning we're asking devclaw to file a fix-PR against
+        itself. This is a deliberate authority escalation gated by the
+        daemon's ``l3_enabled`` config flag and the devclaw-defect
+        classifier's confidence bar; the MCP client itself does not
+        enforce those — that's the daemon layer's job.
+
+        ``description`` is threaded verbatim into the goal-planner's
+        ticket brief. ``title`` is optional; when omitted or empty the
+        devclaw planner derives one from the description. Both are
+        stripped and empty-checked upstream (playbook + action layer);
+        this method fails fast on empty required args as a defence in
+        depth.
+
+        Returns whatever devclaw's tool returns (typically the created
+        goal id + initial state). Raises :class:`MCPClientError` on
+        transport / protocol / tool error.
+        """
+        if not workspace_dir:
+            raise MCPClientError(
+                reason="protocol",
+                message="fix_bug requires non-empty workspace_dir",
+            )
+        if not description:
+            raise MCPClientError(
+                reason="protocol",
+                message="fix_bug requires non-empty description",
+            )
+        args: dict[str, Any] = {
+            "workspace_dir": workspace_dir,
+            "description": description,
+        }
+        if title:
+            args["title"] = title
+        return await self._call_tool("fix_bug", args)
+
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """JSON-RPC ``tools/call`` wrapper.
 

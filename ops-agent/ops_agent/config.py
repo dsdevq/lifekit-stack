@@ -48,6 +48,19 @@ class OpsConfig:
     # closeloop-family goals). ≤1 is treated as 2 in the detector so a
     # single fire never counts as a "streak."
     trend_repeat_threshold: int = 3
+    # L3 (ops-PR4) — devclaw-bug-fix-ticket. Off by default: L3 fires the
+    # fix_bug MCP tool against devclaw's OWN repo when the devclaw-defect
+    # classifier matches on an O2 incident. This is the most powerful
+    # action ops-agent has, so we ship it opt-in until the classifier's
+    # signature set has field calibration. When ``l3_enabled=True`` but
+    # ``devclaw_repo_path`` is None, L3 short-circuits to a failed outcome
+    # (typed) rather than firing at anything else.
+    l3_enabled: bool = False
+    # Absolute path to devclaw's source repo on the host — becomes
+    # ``workspace_dir`` on the fix_bug MCP call. Loaded from
+    # ``OPS_AGENT_DEVCLAW_REPO_PATH``. None disables L3 in practice even
+    # if ``l3_enabled=True`` (the action returns typed-failed).
+    devclaw_repo_path: Path | None = None
 
 
 def _env_path(name: str, default: str) -> Path:
@@ -89,6 +102,22 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
 
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse a boolean env var. Truthy: 1/true/yes/on (case-insensitive).
+
+    Anything else — including missing / blank — falls back to ``default``.
+    Errs on the side of the default so a fat-fingered env value can't
+    silently activate an aggressive feature flag (L3 in particular).
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in _TRUTHY
+
+
 def _env_csv_tuple(name: str, default: str) -> tuple[str, ...]:
     """Parse a comma-separated env var into a tuple of stripped non-empty strings.
 
@@ -118,6 +147,13 @@ def load_config() -> OpsConfig:
                                            volume; enables O4 trend-signal
                                            consumer (unset → O4 no-ops)
       OPS_AGENT_TREND_REPEAT_THRESHOLD   — O4 consecutive-day threshold (def 3)
+      OPS_AGENT_L3_ENABLED               — enable L3 devclaw-bug-fix-ticket
+                                           playbook (default off — opt-in
+                                           until classifier is calibrated)
+      OPS_AGENT_DEVCLAW_REPO_PATH        — absolute path to devclaw's own
+                                           source repo on the host; becomes
+                                           workspace_dir on the fix_bug MCP
+                                           call. Unset → L3 short-circuits.
     """
     return OpsConfig(
         goals_dir=_env_path("OPS_AGENT_GOALS_DIR", "~/memory/goals"),
@@ -131,4 +167,6 @@ def load_config() -> OpsConfig:
         docker_timeout_s=_env_float("OPS_AGENT_DOCKER_TIMEOUT_S", 30.0),
         workspaces_dir=_env_optional_path("OPS_AGENT_WORKSPACES_DIR"),
         trend_repeat_threshold=_env_int("OPS_AGENT_TREND_REPEAT_THRESHOLD", 3),
+        l3_enabled=_env_bool("OPS_AGENT_L3_ENABLED", False),
+        devclaw_repo_path=_env_optional_path("OPS_AGENT_DEVCLAW_REPO_PATH"),
     )
