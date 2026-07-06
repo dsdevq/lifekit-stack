@@ -77,6 +77,17 @@ RUN git clone --depth 1 --branch "${DEVCLAW_REF}" "${DEVCLAW_REPO}" /app
 
 WORKDIR /app
 
+# ---- console bundle (built here, not committed to the devclaw repo) ---------
+# The three-screen web console is a Vite+React SPA served by the Python server
+# from devclaw/server/console/dist. Node is already present (this is a node:22
+# base for the Claude CLI), so we build the bundle from source AT IMAGE BUILD
+# rather than vendoring the minified output into git. Must run BEFORE the pip
+# install below so hatchling bakes the freshly-built dist into the wheel
+# (pyproject `tool.hatch.build.targets.wheel.artifacts` force-includes it even
+# though dist is .gitignored in the source repo).
+RUN npm --prefix devclaw/server/console ci \
+ && npm --prefix devclaw/server/console run build
+
 # Install the devclaw Python package (FastMCP server + deps).
 # --break-system-packages: required on Debian trixie (PEP 668 externally-managed
 # Python); no venv needed here — pip installs into the system site-packages.
