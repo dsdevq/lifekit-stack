@@ -427,6 +427,13 @@ services:
       # value is JSON because fastmcp's pydantic-settings parses list fields
       # from JSON env vars.
       FASTMCP_HTTP_ALLOWED_HOSTS: ${FASTMCP_HTTP_ALLOWED_HOSTS:-["devclaw-mcp:8000","lifekit-vps.tail1cb676.ts.net:18791"]}
+      # Same guard, Origin half: Vite's built index.html loads its JS with
+      # <script crossorigin>, so the browser sends an Origin header. Behind
+      # tailscale serve, TLS terminates before uvicorn — the guard computes
+      # the request origin as http://…, the browser says https://… — mismatch
+      # → 403 Forbidden Origin on every console asset. Allowlist the console's
+      # real browser origin.
+      FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
       OPENHANDS_SUPPRESS_BANNER: "1"
