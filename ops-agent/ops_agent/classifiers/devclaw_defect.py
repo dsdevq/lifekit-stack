@@ -274,11 +274,7 @@ def _detect_repeated_markers(
     workspace_break_storm): a single marker line is the respective safety net
     doing its job; ≥``_REPEAT_SIGNATURE_MIN_HITS`` distinct lines means the
     underlying cause isn't self-healing and L3 should look at devclaw."""
-    hits = [
-        line.strip()
-        for line in log_tail
-        if any(marker.search(line) for marker in markers)
-    ]
+    hits = [line.strip() for line in log_tail if any(marker.search(line) for marker in markers)]
     if len(hits) < _REPEAT_SIGNATURE_MIN_HITS:
         return None
     return DevclawDefectMatch(
