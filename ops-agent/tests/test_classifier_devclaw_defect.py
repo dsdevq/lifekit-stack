@@ -220,3 +220,63 @@ def test_eval_truncation_wins_over_planner_loop_when_both_match(tmp_path):
     )
     hit = classify_devclaw_defect(goal_id="prio1", goals_dir=tmp_path)
     assert hit is not None and hit.signature == "eval_truncation"
+
+
+# ── stub_disguise (repeat-only) ─────────────────────────────────────────────
+
+
+def test_stub_disguise_on_repeated_downgrades(tmp_path):
+    log = "\n".join(
+        [
+            "clause 3 downgraded: satisfied by not_yet_available stub",
+            "benign line",
+            "clause 5 downgraded: unauthorized stub — evidence rejected",
+        ]
+    )
+    _write_goal(tmp_path, "stub1", log=log)
+    hit = classify_devclaw_defect(goal_id="stub1", goals_dir=tmp_path)
+    assert hit is not None and hit.signature == "stub_disguise"
+    assert any("2 marker lines" in e for e in hit.evidence)
+
+
+def test_stub_disguise_silent_on_single_downgrade(tmp_path):
+    """One downgrade is the stub-policy safety net working — not a defect."""
+    log = "clause 3 downgraded: satisfied by not_yet_available stub"
+    _write_goal(tmp_path, "stub2", log=log)
+    assert classify_devclaw_defect(goal_id="stub2", goals_dir=tmp_path) is None
+
+
+# ── workspace_break_storm (repeat-only) ─────────────────────────────────────
+
+
+def test_workspace_break_storm_on_repeated_trips(tmp_path):
+    log = "\n".join(
+        [
+            "workspace break tripped for /repos/closeloop — resetting",
+            "retrying task abc",
+            "workspace_break_tripped: /repos/closeloop",
+        ]
+    )
+    _write_goal(tmp_path, "storm1", log=log)
+    hit = classify_devclaw_defect(goal_id="storm1", goals_dir=tmp_path)
+    assert hit is not None and hit.signature == "workspace_break_storm"
+
+
+def test_workspace_break_storm_silent_on_single_trip(tmp_path):
+    """A single circuit-breaker trip is the intended protection."""
+    log = "workspace break tripped for /repos/closeloop — resetting"
+    _write_goal(tmp_path, "storm2", log=log)
+    assert classify_devclaw_defect(goal_id="storm2", goals_dir=tmp_path) is None
+
+
+def test_json_parse_error_wins_over_stub_disguise_when_both_match(tmp_path):
+    log = "\n".join(
+        [
+            "cognition planner failed: expected valid JSON",
+            "clause 3 downgraded: satisfied by not_yet_available stub",
+            "clause 5 downgraded: satisfied by not_yet_available stub",
+        ]
+    )
+    _write_goal(tmp_path, "prio2", log=log)
+    hit = classify_devclaw_defect(goal_id="prio2", goals_dir=tmp_path)
+    assert hit is not None and hit.signature == "json_parse_error"

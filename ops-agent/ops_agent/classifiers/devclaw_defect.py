@@ -24,10 +24,24 @@ v1 signatures — every one is a real closeloop-family incident pattern:
     suggesting the planner is stuck on the same action.
   - ``json_parse_error`` — cognition output failed to parse; appears in
     the log as an ``expected valid JSON`` / ``could not parse`` line.
+  - ``stub_disguise`` — the evaluator repeatedly downgrades clauses that
+    are satisfied by an unauthorized ``not_yet_available`` stub. One
+    downgrade is the safety net working; a *run* of them points at a
+    decomposer that keeps emitting stubs the goal never authorized.
+  - ``workspace_break_storm`` — the workspace circuit-breaker keeps
+    tripping for the same workspace. A single trip is the intended
+    protection; repeats mean the underlying failure isn't self-healing
+    (sandbox provisioning / queue retry loop, not the target repo).
+
+The last two fire only on REPEATED marker lines (≥2 in the log tail) —
+ported from the ops-PR5 draft, where their single-hit base confidences
+(0.55 / 0.60) deliberately sat below the L3 threshold and only cleared it
+on a second hit.
 
 Anything else = ``None`` = fall through to L2. Multiple matches roll up
 into the first one hit (order == priority: eval_truncation >
-phantom_verdict > planner_loop > json_parse_error).
+phantom_verdict > planner_loop > json_parse_error > stub_disguise >
+workspace_break_storm).
 """
 
 from __future__ import annotations
@@ -90,12 +104,32 @@ _DISPATCH_LINE = re.compile(
     re.IGNORECASE,
 )
 
+# Stub-disguise markers — the evaluator's stub-policy downgrade lines. Drawn
+# from the recurring closeloop pattern where the decomposer kept emitting
+# unauthorized ``not_yet_available`` stubs.
+_STUB_DISGUISE_MARKERS = (
+    re.compile(r"not_yet_available\s+stub", re.IGNORECASE),
+    re.compile(r"unauthorized\s+stub", re.IGNORECASE),
+)
+
+# Workspace-break markers — the queue's circuit-breaker trip lines.
+_WORKSPACE_BREAK_MARKERS = (
+    re.compile(r"workspace\s+break\s+tripped", re.IGNORECASE),
+    re.compile(r"workspace_break_tripped", re.IGNORECASE),
+)
+
+# stub_disguise / workspace_break_storm fire on REPEATS only — a single
+# marker line is the respective safety net doing its job.
+_REPEAT_SIGNATURE_MIN_HITS = 2
+
 # Signatures in priority order. First match wins — see module docstring.
 _SIGNATURE_ORDER = (
     "eval_truncation",
     "phantom_verdict",
     "planner_loop",
     "json_parse_error",
+    "stub_disguise",
+    "workspace_break_storm",
 )
 
 
@@ -229,6 +263,59 @@ def _detect_json_parse_error(log_tail: list[str]) -> DevclawDefectMatch | None:
     return None
 
 
+def _detect_repeated_markers(
+    log_tail: list[str],
+    markers: tuple[re.Pattern[str], ...],
+    *,
+    signature: str,
+    diagnosis: str,
+) -> DevclawDefectMatch | None:
+    """Shared shape for the repeat-only signatures (stub_disguise /
+    workspace_break_storm): a single marker line is the respective safety net
+    doing its job; ≥``_REPEAT_SIGNATURE_MIN_HITS`` distinct lines means the
+    underlying cause isn't self-healing and L3 should look at devclaw."""
+    hits = [
+        line.strip()
+        for line in log_tail
+        if any(marker.search(line) for marker in markers)
+    ]
+    if len(hits) < _REPEAT_SIGNATURE_MIN_HITS:
+        return None
+    return DevclawDefectMatch(
+        signature=signature,
+        evidence=(
+            f"{len(hits)} marker lines in log tail (repeat threshold {_REPEAT_SIGNATURE_MIN_HITS})",
+            f"latest: {hits[-1][:200]!r}",
+            diagnosis,
+        ),
+        confidence="medium",
+    )
+
+
+def _detect_stub_disguise(log_tail: list[str]) -> DevclawDefectMatch | None:
+    return _detect_repeated_markers(
+        log_tail,
+        _STUB_DISGUISE_MARKERS,
+        signature="stub_disguise",
+        diagnosis=(
+            "repeated unauthorized-stub downgrades point at the decomposer "
+            "emitting stubs the goal never authorized (devclaw/goal/decomposer.py)"
+        ),
+    )
+
+
+def _detect_workspace_break_storm(log_tail: list[str]) -> DevclawDefectMatch | None:
+    return _detect_repeated_markers(
+        log_tail,
+        _WORKSPACE_BREAK_MARKERS,
+        signature="workspace_break_storm",
+        diagnosis=(
+            "repeated circuit-breaker trips mean a persistent failure the queue "
+            "can't clear — usually devclaw's sandbox or execution layer"
+        ),
+    )
+
+
 def classify_devclaw_defect(
     *,
     goal_id: str,
@@ -274,6 +361,8 @@ def classify_devclaw_defect(
         "phantom_verdict": lambda: _detect_phantom_verdict(fm),
         "planner_loop": lambda: _detect_planner_loop(log_tail),
         "json_parse_error": lambda: _detect_json_parse_error(log_tail),
+        "stub_disguise": lambda: _detect_stub_disguise(log_tail),
+        "workspace_break_storm": lambda: _detect_workspace_break_storm(log_tail),
     }
     for name in _SIGNATURE_ORDER:
         hit = detectors[name]()
