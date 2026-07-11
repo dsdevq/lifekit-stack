@@ -20,7 +20,23 @@ ENV_FILE="${ENV_FILE:-/srv/openclaw/config/.env}"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/srv/openclaw/config}"
 COMPOSE_FILE="${REPO_DIR}/compose/docker-compose.yml"
 
-say() { printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
+CURRENT_STEP="startup"
+DEPLOY_COMPLETE=0
+say() { CURRENT_STEP="$*"; printf '\n\033[1;34m→ %s\033[0m\n' "$*"; }
+
+# A deploy that dies mid-script must announce it — `set -e` otherwise skips
+# the post-up steps (cli reattach, session reset, runner verify) with nothing
+# but a log tail to show for it (2026-07-11: a compose name conflict aborted
+# the up step; the stack LOOKED deployed while three steps never ran). #94
+on_exit() {
+  local code=$?
+  if [[ "${DEPLOY_COMPLETE}" != "1" ]]; then
+    printf '\n\033[1;31m✗ DEPLOY FAILED (exit %s) during: %s\033[0m\n' "${code}" "${CURRENT_STEP}" >&2
+    printf '\033[1;31m  Later steps (cli reattach, session reset, runner verify) did NOT run.\033[0m\n' >&2
+    printf '\033[1;31m  Fix the failure and re-run deploy.sh — it is idempotent.\033[0m\n' >&2
+  fi
+}
+trap on_exit EXIT
 
 cd "${REPO_DIR}"
 
@@ -158,10 +174,47 @@ say "rebuilding devclaw-sandbox --no-cache (profile=build-only)"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
   --profile build-only build --no-cache devclaw-sandbox
 
+# ─── Rebuild devclaw-sandbox-dotnet (what production actually spawns) ────────
+#
+# DEVCLAW_SANDBOX_IMAGE defaults to devclaw-sandbox-dotnet:local in compose —
+# the multi-runtime variant layered on the base sandbox via the devclaw repo's
+# .sandcastle/Dockerfile.dotnet. It has no compose service, so build it here
+# at the resolved SHA. No --no-cache needed: the base image rebuild above
+# already busts its FROM layer. (#93 — 2026-06-28→07-11: this image went two
+# weeks stale, shipping workers with no skills bundle, because nothing rebuilt
+# or verified it.)
+say "rebuilding devclaw-sandbox-dotnet (the image DEVCLAW_SANDBOX_IMAGE spawns)"
+docker tag devclaw-sandbox:local devclaw-sandbox:latest   # Dockerfile.dotnet's FROM
+DOTNET_CTX="$(mktemp -d)"
+DOTNET_REF="${DEVCLAW_SHA}"
+[[ "${DOTNET_REF}" == "unknown" ]] && DOTNET_REF="${DEVCLAW_REF_INPUT}"
+curl -fsS "https://raw.githubusercontent.com/dsdevq/devclaw/${DOTNET_REF}/.sandcastle/Dockerfile.dotnet" \
+  -o "${DOTNET_CTX}/Dockerfile.dotnet"
+docker build -t devclaw-sandbox-dotnet:local \
+  -f "${DOTNET_CTX}/Dockerfile.dotnet" "${DOTNET_CTX}"
+rm -rf "${DOTNET_CTX}"
+
 # ─── Build + start ───────────────────────────────────────────────────────────
 
 say "docker compose up -d --build"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
+# docker's recreate path can trip on a stale temp-name reservation
+# ("Conflict. The container name \"/<hash>_compose-<svc>-1\" is already in
+# use..."). One force-recreate of the conflicting service picks a fresh temp
+# name and clears it; anything else stays a hard failure. #94
+UP_LOG="$(mktemp)"
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build 2>&1 | tee "${UP_LOG}"; then
+  CONFLICT_SVC="$(grep -oE '[0-9a-f]{12}_compose-[a-z0-9-]+-[0-9]+' "${UP_LOG}" \
+    | head -1 | sed -E 's/^[0-9a-f]{12}_compose-//; s/-[0-9]+$//' || true)"
+  if [[ -n "${CONFLICT_SVC}" ]]; then
+    say "recreate conflict on '${CONFLICT_SVC}' — force-recreating once, retrying up"
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+      up -d --force-recreate "${CONFLICT_SVC}"
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
+  else
+    exit 1
+  fi
+fi
+rm -f "${UP_LOG}"
 
 # ─── Reattach openclaw-cli to new gateway network namespace ──────────────────
 #
@@ -235,18 +288,26 @@ MCP_MD5=$(docker run --rm --entrypoint md5sum devclaw-mcp:local \
   /app/openhands-runner/runner.py | awk '{print $1}')
 SBX_MD5=$(docker run --rm --entrypoint md5sum devclaw-sandbox:local \
   /opt/devclaw/runner.py | awk '{print $1}')
+# Verify the image tasks ACTUALLY run in — DEVCLAW_SANDBOX_IMAGE (compose
+# default: devclaw-sandbox-dotnet:local), not just the base it derives from.
+# This is the check whose absence hid the two-week staleness (#93).
+SPAWN_IMAGE="$(grep -E '^DEVCLAW_SANDBOX_IMAGE=' "${ENV_FILE}" | tail -1 | cut -d= -f2- || true)"
+SPAWN_IMAGE="${SPAWN_IMAGE:-devclaw-sandbox-dotnet:local}"
+SPAWN_MD5=$(docker run --rm --entrypoint md5sum "${SPAWN_IMAGE}" \
+  /opt/devclaw/runner.py | awk '{print $1}')
 UPSTREAM_URL="https://raw.githubusercontent.com/dsdevq/devclaw/${DEVCLAW_SHA}/openhands-runner/runner.py"
 UPSTREAM_MD5=$(curl -fsS "${UPSTREAM_URL}" | md5sum | awk '{print $1}')
 if [[ -z "${UPSTREAM_MD5}" || "${UPSTREAM_MD5}" == "d41d8cd98f00b204e9800998ecf8427e" ]]; then
   echo "✗ could not fetch upstream runner.py from ${UPSTREAM_URL}" >&2
   exit 1
 fi
-if [[ "${MCP_MD5}" != "${UPSTREAM_MD5}" || "${SBX_MD5}" != "${UPSTREAM_MD5}" ]]; then
+if [[ "${MCP_MD5}" != "${UPSTREAM_MD5}" || "${SBX_MD5}" != "${UPSTREAM_MD5}" || "${SPAWN_MD5}" != "${UPSTREAM_MD5}" ]]; then
   cat >&2 <<EOF
 ✗ runner.py md5 mismatch:
     upstream (${DEVCLAW_REF_INPUT}@${DEVCLAW_SHA:0:7})  md5=${UPSTREAM_MD5}
     devclaw-mcp:local                                 md5=${MCP_MD5}
     devclaw-sandbox:local                             md5=${SBX_MD5}
+    ${SPAWN_IMAGE} (DEVCLAW_SANDBOX_IMAGE)            md5=${SPAWN_MD5}
   One or both images are out of sync with upstream. Common causes:
     - DEVCLAW_REF points at a stale branch (default is 'main')
     - BuildKit cached a clone layer that didn't see upstream move
@@ -254,7 +315,7 @@ if [[ "${MCP_MD5}" != "${UPSTREAM_MD5}" || "${SBX_MD5}" != "${UPSTREAM_MD5}" ]];
 EOF
   exit 1
 fi
-echo "  ✓ runner.py md5=${UPSTREAM_MD5} matches upstream + both images"
+echo "  ✓ runner.py md5=${UPSTREAM_MD5} matches upstream + all three images (incl. ${SPAWN_IMAGE})"
 
 # ─── Skill native-deps install ───────────────────────────────────────────────
 #
@@ -327,4 +388,5 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile cli run -
 say "container status"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 
+DEPLOY_COMPLETE=1
 say "✓ deploy complete."
