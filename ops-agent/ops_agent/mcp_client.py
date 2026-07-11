@@ -184,7 +184,9 @@ class DevclawMCPClient:
         if resp.status_code >= 400:
             _log.warning(
                 "mcp initialize http status url=%s status=%s body=%s",
-                self._url, resp.status_code, resp.text[:200],
+                self._url,
+                resp.status_code,
+                resp.text[:200],
             )
             raise MCPClientError(
                 reason="http_status",
@@ -351,7 +353,9 @@ class DevclawMCPClient:
         if resp.status_code >= 400:
             _log.warning(
                 "mcp http status url=%s status=%s body=%s",
-                self._url, resp.status_code, resp.text[:200],
+                self._url,
+                resp.status_code,
+                resp.text[:200],
             )
             raise MCPClientError(
                 reason="http_status",
