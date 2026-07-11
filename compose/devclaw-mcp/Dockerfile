@@ -101,7 +101,8 @@ ENV DEVCLAW_TRANSPORT=http \
     DEVCLAW_DB=/var/lib/devclaw/devclaw.db \
     CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude \
     CLAUDE_CONFIG_DIR=/home/node/.claude \
-    OPENHANDS_SUPPRESS_BANNER=1
+    OPENHANDS_SUPPRESS_BANNER=1 \
+    DEVCLAW_SKILL_LIBRARY=/app/skill-library
 
 EXPOSE 8000
 
