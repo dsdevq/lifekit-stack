@@ -30,10 +30,14 @@ _log = logging.getLogger("ops_agent.cognition")
 class CognitionError(Exception):
     """Typed cognition failure.
 
-    ``reason`` is one of ``spawn_failed`` / ``timeout`` / ``non_zero_exit`` so
-    the playbook can choose how to report it (we log all three; the daemon
-    keeps polling regardless). ``stderr`` and ``stdout_tail`` are best-effort
-    captures from the subprocess.
+    ``reason`` is one of ``spawn_failed`` / ``timeout`` / ``non_zero_exit`` /
+    ``usage_limit`` so the playbook can choose how to report it (we log all of
+    them; the daemon keeps polling regardless). ``usage_limit`` is a *subtype*
+    of a non-zero exit: Claude's Pro-session quota/rate-limit messages land on
+    stdout with a zero-length stderr, so we sniff for them and re-tag —
+    mirrors devclaw's "usage limits pause-and-resume" classification (a quota
+    hit is not a real failure, it's a "come back later"). ``stderr`` and
+    ``stdout_tail`` are best-effort captures from the subprocess.
     """
 
     reason: str
@@ -43,6 +47,27 @@ class CognitionError(Exception):
 
     def __str__(self) -> str:  # pragma: no cover — string form is debug-only
         return f"CognitionError({self.reason}): {self.message}"
+
+
+# Markers Claude prints (on stdout, empty stderr) when the Pro-session quota or
+# a rate limit is hit. Case-insensitive; kept loose to survive minor CLI-copy
+# drift. When any of these appear on a non-zero exit we tag the failure
+# ``usage_limit`` rather than ``non_zero_exit`` so a downstream pause-handler
+# (see the ops-agent robustness note in the design) can treat it as
+# "retry-after-reset", not "the goal is broken".
+_USAGE_LIMIT_MARKERS = (
+    "usage limit",
+    "rate limit",
+    "quota",
+    "too many requests",
+    "resets at",
+    "please try again later",
+)
+
+
+def _looks_like_usage_limit(*texts: str) -> bool:
+    blob = " ".join(t for t in texts if t).lower()
+    return any(marker in blob for marker in _USAGE_LIMIT_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -170,17 +195,189 @@ async def call_claude(
     latency_ms = int((time.monotonic() - started) * 1000)
 
     if proc.returncode != 0:
+        # stdout tail is included because Claude's usage-limit messages land
+        # on stdout with an empty stderr — same trap devclaw's planner has.
+        # Sniff for the quota/rate-limit shape and re-tag so the failure isn't
+        # lumped in with a genuine crash.
+        is_quota = _looks_like_usage_limit(stdout, stderr)
+        reason = "usage_limit" if is_quota else "non_zero_exit"
         _log.warning(
-            "cognition non-zero exit role=%s code=%s argv=%s",
+            "cognition %s role=%s code=%s argv=%s",
+            reason,
             role,
             proc.returncode,
             argv_head,
         )
-        # stdout tail is included because Claude's usage-limit messages land
-        # on stdout with an empty stderr — same trap devclaw's planner has.
         raise CognitionError(
-            reason="non_zero_exit",
-            message=f"claude --print exited {proc.returncode}",
+            reason=reason,
+            message=(
+                "claude --print hit a usage/rate limit"
+                if is_quota
+                else f"claude --print exited {proc.returncode}"
+            ),
+            stderr=stderr[:500],
+            stdout_tail=stdout[-500:],
+        )
+
+    return CognitionCall(
+        stdout=stdout,
+        model=effective_model,
+        latency_ms=latency_ms,
+        argv_head=argv_head,
+    )
+
+
+# ── agentic (evidence-gathering) cognition ──────────────────────────────────
+#
+# The one-shot ``call_claude`` above is a pure prompt→text call with NO tools —
+# it cannot inspect a repo, read a lockfile, or run `git diff`. The O5
+# blocked-question-answerer needs exactly that: to ANSWER "is package-lock.json
+# out of sync?" the model has to look. ``call_claude_agentic`` runs the same
+# ``claude --print`` under an OAuth session but with a bounded, READ-ONLY
+# toolset and a working directory scoped to the goal's repo checkout, so the
+# model gathers evidence itself and returns the structured decision as its
+# final message.
+#
+# This is a deliberate authority escalation (cognition gains shell/file access)
+# and is gated at the daemon layer (OPS_AGENT_ANSWER_ENABLED, off by default) —
+# same opt-in discipline as L3 fix_bug. The guardrails here:
+#   - the tool allowlist is read-only (no Write/Edit; Bash restricted to a
+#     small set of inspection verbs) — the daemon passes it in;
+#   - cwd is the goal's workspace, which is bind-mounted READ-ONLY into the
+#     ops-agent container, so even a mis-allowlisted write fails at the OS;
+#   - bounded --max-turns and a longer-but-bounded timeout;
+#   - the same OAuth-env scrub as the one-shot path.
+#
+# NOTE (needs a live shakedown): the exact Claude Code CLI flag names
+# (--allowedTools / --max-turns / --add-dir) must be validated against the
+# installed `claude` version before this ships — they are the documented
+# headless flags but the ops-agent has only ever exercised the one-shot path.
+
+_DEFAULT_AGENTIC_TIMEOUT_S = 180
+_DEFAULT_MAX_TURNS = 12
+
+# Read-only default allowlist. Bash is scoped to inspection verbs only. The
+# daemon can override; this is the conservative floor.
+DEFAULT_ANSWER_TOOLS: tuple[str, ...] = (
+    "Read",
+    "Grep",
+    "Glob",
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(cat:*)",
+    "Bash(ls:*)",
+    "Bash(node --version)",
+    "Bash(npm --version)",
+    "Bash(python3 --version)",
+)
+
+
+def _build_agentic_argv(
+    bin_path: str,
+    prompt: str,
+    model: str | None,
+    *,
+    add_dir: str,
+    allowed_tools: tuple[str, ...],
+    max_turns: int,
+) -> list[str]:
+    """Argv for an agentic (tool-enabled, read-only) ``claude --print`` call.
+
+    Pure → unit-testable, mirroring :func:`_build_argv`.
+    """
+    argv = [bin_path, "--print", "--output-format=text"]
+    if model:
+        argv += ["--model", model]
+    argv += ["--add-dir", add_dir]
+    if allowed_tools:
+        argv += ["--allowedTools", " ".join(allowed_tools)]
+    argv += ["--max-turns", str(max_turns)]
+    argv.append(prompt)
+    return argv
+
+
+async def call_claude_agentic(
+    prompt: str,
+    *,
+    cwd: str,
+    role: str = "ops-agent-answer",
+    model: str | None = None,
+    allowed_tools: tuple[str, ...] = DEFAULT_ANSWER_TOOLS,
+    max_turns: int = _DEFAULT_MAX_TURNS,
+    timeout_s: int | None = None,
+) -> CognitionCall:
+    """Spawn a tool-enabled ``claude --print`` scoped to ``cwd``; return stdout.
+
+    Same failure taxonomy + OAuth-env scrub as :func:`call_claude`. ``cwd`` is
+    the goal's repo checkout (a READ-ONLY mount in production). Raises
+    :class:`CognitionError` on ``spawn_failed`` / ``timeout`` / ``non_zero_exit``
+    / ``usage_limit`` — the daemon catches it and falls back to a safe
+    (blocked-preserving) decision.
+    """
+    bin_path = _bin()
+    effective_model = model if model is not None else _default_model()
+    effective_timeout = timeout_s if timeout_s is not None else _DEFAULT_AGENTIC_TIMEOUT_S
+
+    argv = _build_agentic_argv(
+        bin_path,
+        prompt,
+        effective_model,
+        add_dir=cwd,
+        allowed_tools=allowed_tools,
+        max_turns=max_turns,
+    )
+    argv_head = f"{bin_path} --print (agentic, cwd={cwd})"
+    env = _scrubbed_env()
+
+    started = time.monotonic()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd=cwd,
+        )
+    except OSError as exc:
+        _log.warning("agentic cognition spawn failed role=%s err=%s", role, exc)
+        raise CognitionError(
+            reason="spawn_failed",
+            message=f"Failed to spawn {bin_path} (agentic): {exc}",
+        ) from exc
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=effective_timeout)
+    except TimeoutError:
+        proc.kill()
+        with _suppress_wait_error():
+            await proc.wait()
+        _log.warning(
+            "agentic cognition timeout role=%s argv=%s timeout=%ss",
+            role,
+            argv_head,
+            effective_timeout,
+        )
+        raise CognitionError(
+            reason="timeout",
+            message=f"claude --print (agentic) timed out after {effective_timeout}s",
+        ) from None
+
+    stdout = stdout_b.decode("utf-8", "replace")
+    stderr = stderr_b.decode("utf-8", "replace")
+    latency_ms = int((time.monotonic() - started) * 1000)
+
+    if proc.returncode != 0:
+        is_quota = _looks_like_usage_limit(stdout, stderr)
+        reason = "usage_limit" if is_quota else "non_zero_exit"
+        _log.warning("agentic cognition %s role=%s code=%s", reason, role, proc.returncode)
+        raise CognitionError(
+            reason=reason,
+            message=(
+                "claude --print (agentic) hit a usage/rate limit"
+                if is_quota
+                else f"claude --print (agentic) exited {proc.returncode}"
+            ),
             stderr=stderr[:500],
             stdout_tail=stdout[-500:],
         )

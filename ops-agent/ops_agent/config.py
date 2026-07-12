@@ -61,6 +61,19 @@ class OpsConfig:
     # ``OPS_AGENT_DEVCLAW_REPO_PATH``. None disables L3 in practice even
     # if ``l3_enabled=True`` (the action returns typed-failed).
     devclaw_repo_path: Path | None = None
+    # O5 (blocked-goal question-answerer) — auto-ANSWER mode. Off by default:
+    # when enabled, an O5 incident whose question the model judges an
+    # ops/engineering question it can ground in evidence is answered by an
+    # AGENTIC cognition pass (read-only tools scoped to the goal's repo
+    # checkout) and the answer is injected via steer_goal, UNBLOCKING the
+    # goal. Auto-answering + steering is a real authority escalation, so it
+    # ships opt-in (same discipline as L3). When OFF, O5 still fires but the
+    # playbook runs one-shot (no evidence) and can only escalate/noop — it
+    # never auto-answers.
+    answer_enabled: bool = False
+    # Bound on the agentic evidence-gathering subprocess (seconds). Longer than
+    # the one-shot cognition timeout because the model does real file/shell I/O.
+    answer_timeout_s: float = 180.0
 
 
 def _env_path(name: str, default: str) -> Path:
@@ -154,6 +167,12 @@ def load_config() -> OpsConfig:
                                            source repo on the host; becomes
                                            workspace_dir on the fix_bug MCP
                                            call. Unset → L3 short-circuits.
+      OPS_AGENT_ANSWER_ENABLED           — enable O5 auto-ANSWER mode (agentic
+                                           evidence-gathering + steer). Default
+                                           off — O5 still detects + escalates
+                                           when disabled.
+      OPS_AGENT_ANSWER_TIMEOUT_S         — bound on the agentic evidence pass
+                                           (default 180s).
     """
     return OpsConfig(
         goals_dir=_env_path("OPS_AGENT_GOALS_DIR", "~/memory/goals"),
@@ -169,4 +188,6 @@ def load_config() -> OpsConfig:
         trend_repeat_threshold=_env_int("OPS_AGENT_TREND_REPEAT_THRESHOLD", 3),
         l3_enabled=_env_bool("OPS_AGENT_L3_ENABLED", False),
         devclaw_repo_path=_env_optional_path("OPS_AGENT_DEVCLAW_REPO_PATH"),
+        answer_enabled=_env_bool("OPS_AGENT_ANSWER_ENABLED", False),
+        answer_timeout_s=_env_float("OPS_AGENT_ANSWER_TIMEOUT_S", 180.0),
     )

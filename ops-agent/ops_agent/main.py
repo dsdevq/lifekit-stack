@@ -45,9 +45,10 @@ from typing import Any
 from . import actions, playbooks
 from .actions import ActionOutcome, outcome_to_dict
 from .classifiers import DevclawDefectMatch, classify_devclaw_defect
-from .cognition import CognitionError, call_claude
+from .cognition import CognitionError, call_claude, call_claude_agentic
 from .config import OpsConfig, load_config
 from .detectors import (
+    BlockedNeedsAnswerDetector,
     NoProgressDetector,
     NoSteeringDetector,
     TrendSignalRepeatDetector,
@@ -66,6 +67,7 @@ PlaybookDecision = (
     | playbooks.DriftingGoalDecision
     | playbooks.VerifyingStallDecision
     | playbooks.DevclawBugFixDecision
+    | playbooks.BlockedQuestionDecision
 )
 
 _log = logging.getLogger("ops_agent")
@@ -103,11 +105,47 @@ def _l3_route_or_none(incident: Incident, cfg: OpsConfig) -> DevclawDefectMatch 
     )
 
 
+def _resolve_evidence_repo(incident: Incident, cfg: OpsConfig) -> str | None:
+    """Resolve the goal's repo checkout for O5 agentic evidence-gathering.
+
+    Returns a path string ONLY when auto-answer is enabled AND the goal's
+    ``workspace_dir`` (recorded on the incident payload by the O5 detector)
+    re-anchors to an existing directory under ``cfg.workspaces_dir``. Mirrors
+    O4's :func:`detectors.trend_signal_repeat._resolve_trends_path`: devclaw
+    writes the CONTAINER path, we re-anchor its basename under the ops-agent's
+    RO workspaces mount.
+
+    Returns None (→ no-evidence one-shot mode; the playbook can only escalate/
+    noop) when: answer mode is off, no workspaces mount is configured, no
+    workspace_dir is recorded, or the resolved dir doesn't exist. Never raises.
+    """
+    if incident.trigger != "O5":
+        return None
+    if not cfg.answer_enabled:
+        return None
+    if cfg.workspaces_dir is None:
+        return None
+    workspace_dir = str(incident.payload.get("workspace_dir", "")).strip()
+    if not workspace_dir:
+        return None
+    name = Path(workspace_dir).name
+    if not name:
+        return None
+    repo = cfg.workspaces_dir / name
+    try:
+        if not repo.is_dir():
+            return None
+    except OSError:
+        return None
+    return str(repo)
+
+
 def _build_prompt_for(
     incident: Incident,
     cfg: OpsConfig,
     *,
     l3_match: DevclawDefectMatch | None = None,
+    evidence_repo: str | None = None,
 ) -> str:
     """Render the right playbook prompt for ``incident.trigger``.
 
@@ -184,6 +222,20 @@ def _build_prompt_for(
             proposed_action=str(incident.payload.get("proposed_action", "")),
             detected_at=incident.detected_at.isoformat(timespec="seconds"),
         )
+    if incident.trigger == "O5":
+        # evidence_repo non-None → agentic evidence mode (the prompt tells the
+        # model it has read-only tools in that checkout); None → one-shot mode
+        # (the prompt tells it to escalate anything it can't answer from
+        # context alone). See _resolve_evidence_repo.
+        return playbooks.build_blocked_question_prompt(
+            goal_id=incident.goal_id,
+            objective=str(incident.payload.get("objective", "")),
+            blocked_on=str(incident.payload.get("blocked_on", "")),
+            last_eval_verdict=incident.payload.get("last_eval_verdict"),
+            last_eval_note=str(incident.payload.get("last_eval_note", "")),
+            detected_at=incident.detected_at.isoformat(timespec="seconds"),
+            evidence_repo_path=evidence_repo,
+        )
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
@@ -209,6 +261,8 @@ def _parse_decision_for(
         return playbooks.parse_verifying_stall_decision(raw)
     if incident.trigger == "O4":
         return playbooks.parse_trend_signal_escalate_decision(raw)
+    if incident.trigger == "O5":
+        return playbooks.parse_blocked_question_decision(raw)
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
@@ -248,6 +302,10 @@ def _noop_decision_for(
         return playbooks.DriftingGoalDecision(
             action="noop", message="", reasoning=reasoning, raw_response=""
         )
+    if incident.trigger == "O5":
+        return playbooks.BlockedQuestionDecision(
+            action="noop", answer="", escalation_reason="", reasoning=reasoning, raw_response=""
+        )
     raise ValueError(f"no playbook wired for trigger={incident.trigger!r}")
 
 
@@ -266,6 +324,14 @@ async def _dispatch_action(
     if decision.action == "noop":
         return None
 
+    if decision.action == "escalate":
+        # O5 blocked-question-answerer judged this the human's call (product/
+        # intent/priority, or un-groundable from evidence). Record-only: the
+        # goal STAYS blocked — devclaw already pinged the owner when it
+        # blocked. No MCP write, so no ActionOutcome (same on-disk shape as a
+        # noop, but the decision.action distinguishes the intent).
+        return None
+
     if decision.action == "evaluate_goal":
         if mcp is None:
             return ActionOutcome(
@@ -278,10 +344,10 @@ async def _dispatch_action(
         return await actions.perform_evaluate_goal(incident.goal_id, mcp)
 
     if decision.action == "steer_goal":
-        # ``message`` is only meaningful on a DriftingGoalDecision; the
-        # parser guarantees it's a non-empty trimmed string when the
-        # action is steer_goal.
-        message = getattr(decision, "message", "")
+        # ``message`` is the field on a DriftingGoalDecision (O2/O4); the O5
+        # BlockedQuestionDecision carries the grounded answer in ``answer``.
+        # Both parsers guarantee a non-empty trimmed string on a steer action.
+        message = getattr(decision, "message", "") or getattr(decision, "answer", "")
         if mcp is None:
             return ActionOutcome(
                 action="steer_goal",
@@ -384,14 +450,35 @@ async def _decide_and_act(
             l3_match.confidence,
         )
 
-    prompt = _build_prompt_for(incident, cfg, l3_match=l3_match)
+    # O5 only: resolve the goal's repo checkout for evidence-gathering. None on
+    # every other trigger and on O5 when answer-mode is off / the repo isn't
+    # reachable — then the O5 prompt runs one-shot (escalate/noop only).
+    evidence_repo = _resolve_evidence_repo(incident, cfg)
+    if evidence_repo is not None:
+        _log.info(
+            "O5 evidence route selected goal=%s repo=%s",
+            incident.goal_id,
+            evidence_repo,
+        )
+
+    prompt = _build_prompt_for(incident, cfg, l3_match=l3_match, evidence_repo=evidence_repo)
 
     # Persist the prompt before the cognition call — if the daemon dies
     # mid-call the prompt is still on disk for forensic review.
     (folder / "prompt.md").write_text(prompt)
 
     try:
-        call_result = await call_claude(prompt, role="ops-agent")
+        if evidence_repo is not None:
+            # Agentic pass: read-only tools scoped to the goal's repo checkout
+            # so the model can GATHER EVIDENCE before answering the question.
+            call_result = await call_claude_agentic(
+                prompt,
+                cwd=evidence_repo,
+                role="ops-agent-answer",
+                timeout_s=int(cfg.answer_timeout_s),
+            )
+        else:
+            call_result = await call_claude(prompt, role="ops-agent")
     except CognitionError as cog_err:
         _log.warning(
             "cognition failed reason=%s goal=%s — falling back to noop",
@@ -434,6 +521,15 @@ def _write_decision(folder: Path, decision: PlaybookDecision) -> None:
     service_name = getattr(decision, "service_name", None)
     if service_name:
         payload["service_name"] = service_name
+    # O5 blocked-question-answer decisions carry the grounded answer (steer) or
+    # the escalation reason (escalate); record whichever is present so the
+    # incident folder has the full audit trail of what got injected / deferred.
+    answer = getattr(decision, "answer", None)
+    if answer:
+        payload["answer"] = answer
+    escalation_reason = getattr(decision, "escalation_reason", None)
+    if escalation_reason:
+        payload["escalation_reason"] = escalation_reason
     (folder / "decision.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
@@ -461,6 +557,14 @@ def _render_outcome_md(
         service_name = getattr(decision, "service_name", None)
         if service_name:
             lines.append(f"- **docker restart target:** `{service_name}`")
+        # O5 blocked-question-answer: the grounded answer (injected as steering)
+        # or the escalation reason (goal left blocked for the human).
+        answer = getattr(decision, "answer", None)
+        if answer:
+            lines.append(f"- **Answer (injected as steering):** {answer}")
+        escalation_reason = getattr(decision, "escalation_reason", None)
+        if escalation_reason:
+            lines.append(f"- **Escalation reason:** {escalation_reason}")
     else:
         lines.append(
             "- Incident already had a `decision.json` on disk — no new "
@@ -484,6 +588,8 @@ def _render_outcome_md(
             lines.append(
                 f"- **Action failure:** `{outcome.error_reason}` — {outcome.error_message}"
             )
+    elif decision is not None and decision.action == "escalate":
+        lines.append("- Escalated to the human — goal left `blocked` (no MCP action).")
     elif decision is not None and decision.action == "noop":
         lines.append("- No action taken (`noop`).")
     lines.append("")
@@ -595,6 +701,7 @@ async def run_loop(cfg: OpsConfig, stop: asyncio.Event) -> None:
     # Register every detector here — order is significant only for the
     # order incidents appear in the log on a tick that lights up both.
     detectors: list[Any] = [
+        BlockedNeedsAnswerDetector(),
         NoProgressDetector(),
         NoSteeringDetector(),
         VerifyingStallDetector(),

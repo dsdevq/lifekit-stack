@@ -27,6 +27,12 @@ from ..incident import Incident
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
+# A goal parked in this phase is owned by O5 (blocked-goal question-answerer),
+# not O1: re-evaluating a blocked goal just re-blocks it with the same
+# question (the failure that pinged the owner at 2am on 2026-07-11). O1 skips
+# it so the two triggers don't both fire on one blocked goal.
+_BLOCKED_PHASE = "blocked"
+
 
 @dataclass(frozen=True)
 class GoalSnapshot:
@@ -112,6 +118,9 @@ class NoProgressDetector:
         for goal_dir in iter_goal_dirs(goals_dir):
             snap = read_snapshot(goal_dir)
             if snap is None or not snap.no_progress_notified:
+                continue
+            # Blocked goals belong to O5, not O1 — see _BLOCKED_PHASE.
+            if snap.phase == _BLOCKED_PHASE:
                 continue
             payload: dict[str, Any] = {
                 "objective": snap.objective,

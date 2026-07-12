@@ -16,6 +16,11 @@ correction?") and distinct decision shapes.
 
 from __future__ import annotations
 
+from .blocked_question_answer import (
+    BlockedQuestionDecision,
+    build_blocked_question_prompt,
+    parse_blocked_question_decision,
+)
 from .devclaw_bug_fix_ticket import (
     DevclawBugFixDecision,
     build_devclaw_bug_fix_prompt,
@@ -42,15 +47,18 @@ from .verifying_stall_unblock import (
 )
 
 __all__ = [
+    "BlockedQuestionDecision",
     "DevclawBugFixDecision",
     "DriftingGoalDecision",
     "StuckGoalDecision",
     "VerifyingStallDecision",
+    "build_blocked_question_prompt",
     "build_devclaw_bug_fix_prompt",
     "build_drifting_goal_prompt",
     "build_stuck_goal_prompt",
     "build_trend_signal_escalate_prompt",
     "build_verifying_stall_prompt",
+    "parse_blocked_question_decision",
     "parse_devclaw_bug_fix_decision",
     "parse_drifting_goal_decision",
     "parse_stuck_goal_decision",

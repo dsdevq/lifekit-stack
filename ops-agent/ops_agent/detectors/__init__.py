@@ -11,12 +11,14 @@ the same signal_id for one goal). Further triggers stay deferred — see
 
 from __future__ import annotations
 
+from .blocked_needs_answer import BlockedNeedsAnswerDetector
 from .no_progress import NoProgressDetector
 from .no_steering import NoSteeringDetector
 from .trend_signal_repeat import TrendSignalRepeatDetector
 from .verifying_stall import VerifyingStallDetector
 
 __all__ = [
+    "BlockedNeedsAnswerDetector",
     "NoProgressDetector",
     "NoSteeringDetector",
     "TrendSignalRepeatDetector",
