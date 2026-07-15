@@ -33,7 +33,7 @@ from pathlib import Path
 
 INBOX_HOT_DAYS = 30
 PROPOSALS_HOT_DAYS = 90
-TRAJECTORY_GZIP_DAYS = 7    # gzip completed-run trajectory logs older than this
+TRAJECTORY_GZIP_DAYS = 7  # gzip completed-run trajectory logs older than this
 TRAJECTORY_DELETE_DAYS = 60  # delete gzipped trajectory archives older than this
 
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -89,9 +89,7 @@ def archive_inbox(root: Path, now: datetime, dry_run: bool) -> int:
     if not moved:
         return 0
     if not dry_run:
-        append_archive(
-            root / "inbox-archive.md", now.strftime("%Y-%m-%d"), moved
-        )
+        append_archive(root / "inbox-archive.md", now.strftime("%Y-%m-%d"), moved)
         src.write_text("\n".join(kept).rstrip() + "\n")
     return len(moved)
 
@@ -125,7 +123,7 @@ def _block_is_closed_and_cold(block: str, cutoff: datetime) -> bool:
     header = block.splitlines()[0]
     status_match = None
     for ln in block.splitlines()[1:6]:  # Status is near the top
-        if (sm := STATUS_RE.match(ln)):
+        if sm := STATUS_RE.match(ln):
             status_match = sm
             break
     if not status_match or status_match.group(1).lower() not in CLOSED_STATUSES:
@@ -199,8 +197,9 @@ def session_footprint(agents_dir: Path) -> dict:
     """Report-only: size/count of session + trajectory artifacts so growth is visible."""
     if not agents_dir or not agents_dir.exists():
         return {}
-    sessions = [f for f in agents_dir.glob("*/sessions/*.jsonl")
-                if ".trajectory." not in f.name]
+    sessions = [
+        f for f in agents_dir.glob("*/sessions/*.jsonl") if ".trajectory." not in f.name
+    ]
     trajectories = list(agents_dir.glob("*/sessions/*.trajectory.jsonl*"))
     return {
         "session_files": len(sessions),
@@ -217,9 +216,7 @@ def write_heartbeat(state_dir: Path, now: datetime, dry_run: bool) -> None:
     if dry_run:
         return
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "heartbeat.txt").write_text(
-        now.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n"
-    )
+    (state_dir / "heartbeat.txt").write_text(now.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
 
 
 def log_run(state_dir: Path, now: datetime, summary: dict, dry_run: bool) -> None:
