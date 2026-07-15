@@ -8,6 +8,10 @@ The vault's README.md is the contract; this script mechanizes its lint rules:
   - missing frontmatter   (wiki-layer pages)
   - legacy last_updated   (renamed vault-wide to updatedAt)
   - project completeness  (projects/<name>/ needs plan.md, log.md, journal.md)
+  - empty folders         (a dir with no files rots the taxonomy)
+  - non-kebab / hashed    (filenames are kebab-case; dates only where the date IS the identity)
+  - missing category INDEX(an indexed category with >=2 pages needs INDEX.md)
+  - runtime in knowledge  (*.jsonl/*.db/*.py/*.log under a knowledge dir — evict + gitignore)
 
 Exit 0 = clean, 1 = findings. Read-only, stdlib-only.
 """
@@ -26,7 +30,7 @@ WIKI_PREFIXES = (
     "concepts/",
     "entities/",
     "syntheses/",
-    "incidents/",
+    "lessons/",
 )
 WIKI_ROOTS = {
     "index.md",
@@ -186,6 +190,53 @@ def main():
             if missing:
                 findings.append(
                     f"project-incomplete: projects/{d}/ missing {', '.join(missing)}"
+                )
+
+    # -- filesystem hygiene (empty dirs, non-kebab/hashed names, missing INDEX, runtime files)
+    kebab = re.compile(
+        r"(?:\d{4}-\d{2}-\d{2}(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?|[a-z0-9]+(?:-[a-z0-9]+)*)$"
+    )
+    allcaps = re.compile(r"[A-Z][A-Z0-9_]*$")  # INDEX, README, PLAN, STATUS, …
+    hashed = re.compile(r"(?=[0-9a-f]*[a-f])[0-9a-f]{8,}")  # bridge-*/uuid opaque tokens
+    runtime_ext = (".jsonl", ".db", ".sqlite", ".log", ".py")
+    runtime_ok = {os.path.join("system", "rotate-extras.py")}  # documented mechanism exception
+    indexed = {"domains", "concepts", "entities", "syntheses", "system", "lessons"}
+
+    for dp, dns, fns in os.walk(vault):
+        dns[:] = [d for d in dns if d not in SKIP_DIRS]
+        rel_dir = os.path.relpath(dp, vault)
+        if rel_dir == ".":
+            continue
+        top = rel_dir.split(os.sep)[0]
+        if not [f for f in fns if not f.startswith(".")] and not dns:
+            findings.append(f"empty-folder: {rel_dir}/ has no files")
+        for fn in fns:
+            relf = os.path.join(rel_dir, fn)
+            if fn.endswith(".md"):
+                stem = fn[:-3]
+                if not (kebab.match(stem) or allcaps.match(stem)):
+                    findings.append(
+                        f"non-kebab: {relf} — kebab-case only (dates where the date is the identity)"
+                    )
+                elif hashed.search(stem):
+                    findings.append(
+                        f"hashed-name: {relf} — opaque hash/uuid in filename; give it a human slug"
+                    )
+            if (
+                fn.endswith(runtime_ext)
+                and (top + "/") in WIKI_PREFIXES
+                and relf not in runtime_ok
+                and "/tasks/" not in relf
+                and "/runs/" not in relf  # runtime-scaffold dirs, excluded like orphan/frontmatter checks
+            ):
+                findings.append(
+                    f"runtime-in-knowledge: {relf} — runtime/code doesn't belong in a knowledge dir (gitignore + evict)"
+                )
+        if rel_dir == top and top in indexed:
+            pages_here = [f for f in fns if f.endswith(".md") and f.lower() != "index.md"]
+            if len(pages_here) >= 2 and not any(f.lower() == "index.md" for f in fns):
+                findings.append(
+                    f"missing-index: {top}/ has {len(pages_here)} pages but no INDEX.md"
                 )
 
     total = sum(broken.values())
