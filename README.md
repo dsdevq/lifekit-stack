@@ -20,7 +20,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ## Services
 
-[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines seven always-on services plus `openclaw-cli` (gated behind the `cli` compose profile, on-demand only) and `devclaw-sandbox` (build-only image, never run as a daemon). All always-on services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines eight always-on services plus `openclaw-cli` (gated behind the `cli` compose profile, on-demand only) and `devclaw-sandbox` (build-only image, never run as a daemon). All always-on services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
 
 | Service | Image | Role |
 | --- | --- | --- |
@@ -30,6 +30,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
 | `devclaw-mcp` | `devclaw-mcp:local` (built from `compose/devclaw-mcp/`) | DevClaw v2 autonomous coding runtime, exposed via streamable-http MCP. Spawns one `devclaw-sandbox` container per task via the host Docker socket. Internal-only. |
 | `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | Translates DevClaw's `notify_url` POST into a Telegram message via direct Bot API call. Internal-only on `:8090`. |
+| `ops-agent` | `ops-agent:local` (built from `ops-agent/`) | Resident watcher that polls DevClaw's goal store and records incidents when a goal trips the no-progress watchdog (O1). Read-only on the DevClaw substrate, write-only to its own incident log. ops-PR1 baseline: detect + log at L0; no Claude call, no auto-actions. Future PRs add O2/O3 + cognition. See [`ops-agent/README.md`](./ops-agent/README.md). |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
 ### Uniform service policy

@@ -379,7 +379,16 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          # 3g (raised from 1g on 2026-07-03) — devclaw spawns multiple
+          # concurrent `claude --print` subprocesses per tick (planner,
+          # decomposer, trend-detector, evaluator). Each Node.js Claude CLI
+          # instance is 200-400MB during a call; 2-3 in parallel plus
+          # devclaw's ~250MB base easily exceeds 1g and the kernel OOM
+          # killer SIGKILLs whichever subprocess loses. See closeloop-mission
+          # first-tick incident 2026-07-03T11:37Z: trend-detector + planner
+          # both exited -9 at 3-7s after spawn. VPS has 15g total; 3g is
+          # a comfortable ceiling for concurrent cognition without being wasteful.
+          memory: 3g
     depends_on:
       - openclaw-gateway
     # group_add: grant the non-root `node` user access to the host docker
@@ -407,6 +416,24 @@ services:
       # OFF (consequential for real repos — the done-gate review is the safety
       # net); set DEVCLAW_GOAL_AUTOMERGE=1 in .env to enable.
       DEVCLAW_GOAL_AUTOMERGE: ${DEVCLAW_GOAL_AUTOMERGE:-0}
+      # fastmcp >= 3.4 ships HostOriginGuardMiddleware (DNS-rebinding
+      # protection): any Host header outside 127.0.0.1/localhost/::1 gets a
+      # 421 Misdirected Request BEFORE auth/routes run. The 2026-07-06
+      # --no-cache rebuild pulled 3.4.3 and silently broke BOTH non-loopback
+      # routes: the docker-network MCP endpoint (openclaw-gateway/ops-agent →
+      # http://devclaw-mcp:8000/mcp) and the tailnet console
+      # (https://lifekit-vps.tail1cb676.ts.net:18791/console via tailscale
+      # serve, which forwards the tailnet Host as-is). Allowlist both; the
+      # value is JSON because fastmcp's pydantic-settings parses list fields
+      # from JSON env vars.
+      FASTMCP_HTTP_ALLOWED_HOSTS: ${FASTMCP_HTTP_ALLOWED_HOSTS:-["devclaw-mcp:8000","lifekit-vps.tail1cb676.ts.net:18791"]}
+      # Same guard, Origin half: Vite's built index.html loads its JS with
+      # <script crossorigin>, so the browser sends an Origin header. Behind
+      # tailscale serve, TLS terminates before uvicorn — the guard computes
+      # the request origin as http://…, the browser says https://… — mismatch
+      # → 403 Forbidden Origin on every console asset. Allowlist the console's
+      # real browser origin.
+      FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
       OPENHANDS_SUPPRESS_BANNER: "1"
@@ -481,6 +508,13 @@ services:
       # Inherit Claude Code OAuth from the same files the gateway uses.
       - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # The vault — same pattern openclaw-cli / openclaw-gateway use. Lets the
+      # trend detector persist harness-self retrospectives to
+      # ~/memory/projects/devclaw/trends.md (Path.home() inside the container
+      # resolves to /home/node) and read its own plan.md when reflecting.
+      # Without this mount the harness-self file lands in the container's
+      # ephemeral writable layer and is lost on restart.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
       # gh CLI auth so the goal layer can clone PRIVATE repos and open PRs.
       # Same host creds the gateway uses (`gh auth login` as lifekit). Pairs
       # with the GIT_CONFIG_* credential-helper env above.
@@ -517,6 +551,123 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+
+  ops-agent:
+    <<: *policy
+    # ops-agent (ops-PR2) — resident watcher that detects stuck devclaw goals,
+    # decides via a Claude playbook, and (for L1 only) calls devclaw's MCP
+    # evaluate_goal tool. SEPARATE PROCESS from devclaw-mcp by design: when
+    # the closeloop incident bit devclaw itself (~/memory/projects/devclaw/
+    # plan.md → "Operations agent" section), an in-process self-heal handler
+    # would have shared the same defect.
+    #
+    # ops-PR2 ships:
+    #   - O1 detector (no-progress watchdog) + L0 (record incident).
+    #   - Cognition: subprocess `claude --print` via the bind-mounted Pro
+    #     OAuth session (no API key).
+    #   - L1 action: MCP evaluate_goal(goal_id) against devclaw-mcp.
+    # L2 (steer-injection), L3 (devclaw fix-PR), O2/O3 triggers stay deferred
+    # to ops-PR3+. See ops-agent/README.md.
+    build:
+      context: ../ops-agent
+    image: ops-agent:local
+    depends_on:
+      - devclaw-mcp
+    # group_add: grant the non-root `node` user (uid 1000) access to the host
+    # docker socket. Required by the ops-PR4 docker_restart action; without
+    # this the socket is readable only by root + the host docker group, and
+    # the subprocess wrapper errors with "permission denied". Mirrors the
+    # devclaw-mcp pattern; the GID must match the host's docker group (990
+    # on lifekit-vps, 999 on most Debian installs — override via env).
+    group_add:
+      - "${LIFEKIT_DOCKER_GID:-999}"
+    deploy:
+      resources:
+        limits:
+          # `claude --print --model sonnet` (cognition pass) needs ~1GB headroom;
+          # 512m caused SIGKILL (-9) on every tick on lifekit-vps after the
+          # ops-PR2 deploy. 2GB matches devclaw-mcp's own slice (which runs the
+          # same CLI under the same OAuth session).
+          memory: 2g
+    environment:
+      OPS_AGENT_GOALS_DIR: /data/goals
+      OPS_AGENT_INCIDENTS_DIR: /data/incidents
+      OPS_AGENT_POLL_INTERVAL_S: ${OPS_AGENT_POLL_INTERVAL_S:-60}
+      OPS_AGENT_DEDUP_WINDOW_S: ${OPS_AGENT_DEDUP_WINDOW_S:-86400}
+      # Cognition: claude CLI is installed in the image. The Pro OAuth
+      # session is inherited via the ~/.claude bind-mount below (mirrors
+      # devclaw-mcp's pattern — no API key, ever).
+      OPS_AGENT_CLAUDE_MODEL: ${OPS_AGENT_CLAUDE_MODEL:-sonnet}
+      OPS_AGENT_CLAUDE_TIMEOUT_S: ${OPS_AGENT_CLAUDE_TIMEOUT_S:-60}
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+      # MCP client: target devclaw-mcp on the compose-internal network.
+      # OPS_AGENT_DEVCLAW_MCP_TOKEN matches devclaw's DEVCLAW_TOKEN when set
+      # (devclaw's bearer auth is off by default — see server/lifecycle.py).
+      OPS_AGENT_DEVCLAW_MCP_URL: ${OPS_AGENT_DEVCLAW_MCP_URL:-http://devclaw-mcp:8000/mcp}
+      OPS_AGENT_DEVCLAW_MCP_TOKEN: ${DEVCLAW_TOKEN:-}
+      OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S: ${OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S:-30}
+      # ops-PR4 — O3 (verifying-stall) + docker_restart action knobs.
+      OPS_AGENT_VERIFYING_STALL_HOURS: ${OPS_AGENT_VERIFYING_STALL_HOURS:-4}
+      OPS_AGENT_DOCKER_RESTART_ALLOWLIST: ${OPS_AGENT_DOCKER_RESTART_ALLOWLIST:-compose-devclaw-mcp-1}
+      OPS_AGENT_DOCKER_TIMEOUT_S: ${OPS_AGENT_DOCKER_TIMEOUT_S:-30}
+      # ops-PR6 — O4 (trend-signal-repeat) consumer. Ops-agent tails each
+      # goal's <workspace>/.devclaw/trends.md (RO mount below) and emits an
+      # incident when devclaw's own trend detector fires the same signal on
+      # N consecutive daily runs. Threshold matches the field-validated
+      # 2026-07-02 self-escalation. Unset OPS_AGENT_WORKSPACES_DIR → O4
+      # gracefully no-ops (safe default before the mount is added).
+      OPS_AGENT_WORKSPACES_DIR: /data/workspaces
+      OPS_AGENT_TREND_REPEAT_THRESHOLD: ${OPS_AGENT_TREND_REPEAT_THRESHOLD:-3}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      # Devclaw's goal store lives in the shared devclaw-state volume at
+      # /var/lib/devclaw/goals (DEVCLAW_GOALS_DIR on devclaw-mcp above).
+      # Mount the same volume here READ-ONLY — the boundary contract is that
+      # ops-agent never mutates devclaw substrates directly.
+      - devclaw-state:/data/devclaw-state:ro
+      # Devclaw's workspaces host dir — RO. Enables O4 to read each goal's
+      # <workspace>/.devclaw/trends.md. Same host path devclaw-mcp bind-
+      # mounts RW above (LIFEKIT_DEVCLAW_WORKSPACES); here it's RO because
+      # the ops-agent never mutates workspace state.
+      - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/data/workspaces:ro
+      # Incident output dir — bind-mounted from the host so the owner can
+      # browse incidents/log.md from their SSHFS session without needing to
+      # docker exec in.
+      #
+      # NOTE: the host source dir MUST exist before `docker compose up`.
+      # Docker will silently bind-mount a non-existent host path as a phantom
+      # mount (link count 0); every write inside the container then fails with
+      # FileNotFoundError. Bit us 2026-06-30 — 10 hours of crashed ticks
+      # before the host dir was created. On a fresh deploy:
+      #   sudo mkdir -p /srv/memory/projects/ops-agent
+      #   sudo chown 1000:1000 /srv/memory/projects/ops-agent
+      - ${LIFEKIT_OPS_AGENT_DIR:-/srv/memory/projects/ops-agent}:/data/incidents
+      # Claude CLI session creds — READ-ONLY. Same pattern as devclaw-mcp
+      # and openclaw-gateway. Both ~/.claude and the sibling .claude.json
+      # are required for the SDK to recognize the Pro subscription session.
+      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude:ro
+      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json:ro
+      # Host docker socket — REQUIRED for the docker_restart action (ops-PR4).
+      # Grants effective root on the host. Mitigations: action wraps the
+      # `docker restart` CLI only; service name is strictly allowlisted via
+      # OPS_AGENT_DOCKER_RESTART_ALLOWLIST (default: just devclaw-mcp); no
+      # other docker subcommands are reachable from the codepath; the
+      # no-new-privileges + cap_drop above stay in force.
+      - /var/run/docker.sock:/var/run/docker.sock
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    # Override OPS_AGENT_GOALS_DIR so it points inside the RO volume mount.
+    command: ["ops-agent"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export OPS_AGENT_GOALS_DIR=/data/devclaw-state/goals
+        exec "$$@"
+      - --
 
   notify-relay:
     <<: *policy
