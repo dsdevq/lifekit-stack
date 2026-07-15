@@ -416,6 +416,24 @@ services:
       # OFF (consequential for real repos — the done-gate review is the safety
       # net); set DEVCLAW_GOAL_AUTOMERGE=1 in .env to enable.
       DEVCLAW_GOAL_AUTOMERGE: ${DEVCLAW_GOAL_AUTOMERGE:-0}
+      # fastmcp >= 3.4 ships HostOriginGuardMiddleware (DNS-rebinding
+      # protection): any Host header outside 127.0.0.1/localhost/::1 gets a
+      # 421 Misdirected Request BEFORE auth/routes run. The 2026-07-06
+      # --no-cache rebuild pulled 3.4.3 and silently broke BOTH non-loopback
+      # routes: the docker-network MCP endpoint (openclaw-gateway/ops-agent →
+      # http://devclaw-mcp:8000/mcp) and the tailnet console
+      # (https://lifekit-vps.tail1cb676.ts.net:18791/console via tailscale
+      # serve, which forwards the tailnet Host as-is). Allowlist both; the
+      # value is JSON because fastmcp's pydantic-settings parses list fields
+      # from JSON env vars.
+      FASTMCP_HTTP_ALLOWED_HOSTS: ${FASTMCP_HTTP_ALLOWED_HOSTS:-["devclaw-mcp:8000","lifekit-vps.tail1cb676.ts.net:18791"]}
+      # Same guard, Origin half: Vite's built index.html loads its JS with
+      # <script crossorigin>, so the browser sends an Origin header. Behind
+      # tailscale serve, TLS terminates before uvicorn — the guard computes
+      # the request origin as http://…, the browser says https://… — mismatch
+      # → 403 Forbidden Origin on every console asset. Allowlist the console's
+      # real browser origin.
+      FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
       OPENHANDS_SUPPRESS_BANNER: "1"
