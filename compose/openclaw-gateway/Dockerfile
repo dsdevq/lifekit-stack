@@ -10,7 +10,7 @@ USER root
 # image bakes in whatever openclaw was current when it was built; we pin
 # explicitly so version upgrades survive container recreates. Bump this
 # line to upgrade.
-ARG OPENCLAW_VERSION=2026.6.8
+ARG OPENCLAW_VERSION=2026.6.11
 RUN npm i -g --force openclaw@${OPENCLAW_VERSION}
 
 # Enforce pipefail in any RUN that pipes commands (hadolint DL4006).
