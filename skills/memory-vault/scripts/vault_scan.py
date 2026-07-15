@@ -197,9 +197,13 @@ def main():
         r"(?:\d{4}-\d{2}-\d{2}(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?|[a-z0-9]+(?:-[a-z0-9]+)*)$"
     )
     allcaps = re.compile(r"[A-Z][A-Z0-9_]*$")  # INDEX, README, PLAN, STATUS, …
-    hashed = re.compile(r"(?=[0-9a-f]*[a-f])[0-9a-f]{8,}")  # bridge-*/uuid opaque tokens
+    hashed = re.compile(
+        r"(?=[0-9a-f]*[a-f])[0-9a-f]{8,}"
+    )  # bridge-*/uuid opaque tokens
     runtime_ext = (".jsonl", ".db", ".sqlite", ".log", ".py")
-    runtime_ok = {os.path.join("system", "rotate-extras.py")}  # documented mechanism exception
+    runtime_ok = {
+        os.path.join("system", "rotate-extras.py")
+    }  # documented mechanism exception
     indexed = {"domains", "concepts", "entities", "syntheses", "system", "lessons"}
 
     for dp, dns, fns in os.walk(vault):
@@ -227,13 +231,16 @@ def main():
                 and (top + "/") in WIKI_PREFIXES
                 and relf not in runtime_ok
                 and "/tasks/" not in relf
-                and "/runs/" not in relf  # runtime-scaffold dirs, excluded like orphan/frontmatter checks
+                and "/runs/"
+                not in relf  # runtime-scaffold dirs, excluded like orphan/frontmatter checks
             ):
                 findings.append(
                     f"runtime-in-knowledge: {relf} — runtime/code doesn't belong in a knowledge dir (gitignore + evict)"
                 )
         if rel_dir == top and top in indexed:
-            pages_here = [f for f in fns if f.endswith(".md") and f.lower() != "index.md"]
+            pages_here = [
+                f for f in fns if f.endswith(".md") and f.lower() != "index.md"
+            ]
             if len(pages_here) >= 2 and not any(f.lower() == "index.md" for f in fns):
                 findings.append(
                     f"missing-index: {top}/ has {len(pages_here)} pages but no INDEX.md"
