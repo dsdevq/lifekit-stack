@@ -20,11 +20,18 @@ endpoint (see ``compose/devclaw-mcp/Dockerfile`` and devclaw's
 
   1. We need exactly one tool call — pulling in the full MCP SDK + its
      transport abstractions is more surface than we use.
-  2. Devclaw's transport (FastMCP streamable-http) accepts a plain
-     ``POST /mcp`` with a JSON-RPC body and returns either JSON or SSE.
-     For a single ``tools/call`` we can ask for ``application/json`` via
-     the Accept header and get a one-shot response.
-  3. A thin client is easier to audit for the boundary discipline above.
+  2. A thin client is easier to audit for the boundary discipline above.
+
+Session handshake (2026-07-05 fix): devclaw's FastMCP runs STATEFUL, so a
+bare ``POST /mcp`` with a ``tools/call`` body is rejected with HTTP 400
+``Missing session ID``. Every tool call must ride an initialized MCP session:
+we ``initialize`` once (capturing the ``Mcp-Session-Id`` response header),
+send the ``notifications/initialized`` acknowledgement, and then attach that
+session id + the negotiated ``MCP-Protocol-Version`` to every subsequent
+request. The session is established lazily and self-heals — if the server
+drops it (400/404 session error), we re-initialize once and retry. A
+STATELESS server that returns no session header still works: we simply send
+no session id, exactly as before.
 """
 
 from __future__ import annotations
@@ -38,6 +45,11 @@ from typing import Any
 import httpx
 
 _log = logging.getLogger("ops_agent.mcp")
+
+#: MCP protocol version we advertise on ``initialize``. The server negotiates
+#: and echoes the version it actually speaks in the result; we adopt that for
+#: the ``MCP-Protocol-Version`` header on subsequent requests.
+_MCP_PROTOCOL_VERSION = "2025-06-18"
 
 
 @dataclass(frozen=True)
@@ -104,6 +116,11 @@ class DevclawMCPClient:
         # Monotonic request-id counter — the JSON-RPC id only needs to be
         # unique per outstanding call.
         self._next_id = 1
+        # MCP session state, established lazily via _ensure_session(). None
+        # until the first call (or after a session drop). protocol_version is
+        # the version the server negotiated on initialize.
+        self._session_id: str | None = None
+        self._protocol_version: str = _MCP_PROTOCOL_VERSION
 
     async def __aenter__(self) -> DevclawMCPClient:
         return self
@@ -115,7 +132,7 @@ class DevclawMCPClient:
         if self._owned_client:
             await self._client.aclose()
 
-    def _headers(self) -> dict[str, str]:
+    def _base_headers(self) -> dict[str, str]:
         # Streamable-http MCP accepts either JSON or SSE for responses. We ask
         # for JSON so a single tool call returns one-shot, no SSE plumbing.
         h = {
@@ -125,6 +142,88 @@ class DevclawMCPClient:
         if self._token:
             h["Authorization"] = f"Bearer {self._token}"
         return h
+
+    def _headers(self) -> dict[str, str]:
+        # Post-initialize headers: base + the session id and negotiated
+        # protocol version that a stateful FastMCP server requires on every
+        # request after the handshake.
+        h = self._base_headers()
+        if self._session_id:
+            h["Mcp-Session-Id"] = self._session_id
+            h["MCP-Protocol-Version"] = self._protocol_version
+        return h
+
+    async def _ensure_session(self) -> None:
+        """Establish an MCP session if we don't have one. Idempotent — a no-op
+        once ``_session_id`` is set. A server that returns no session header
+        (stateless mode) leaves ``_session_id`` None and everything still
+        works; we just send no session id."""
+        if self._session_id is not None:
+            return
+        req_id = self._next_id
+        self._next_id += 1
+        body = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": _MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "ops-agent", "version": "1.0"},
+            },
+        }
+        try:
+            resp = await self._client.post(self._url, json=body, headers=self._base_headers())
+        except httpx.RequestError as exc:
+            _log.warning("mcp initialize transport error url=%s err=%s", self._url, exc)
+            raise MCPClientError(
+                reason="transport",
+                message=f"Could not reach devclaw MCP at {self._url}: {exc}",
+            ) from exc
+
+        if resp.status_code >= 400:
+            _log.warning(
+                "mcp initialize http status url=%s status=%s body=%s",
+                self._url,
+                resp.status_code,
+                resp.text[:200],
+            )
+            raise MCPClientError(
+                reason="http_status",
+                message=f"devclaw MCP initialize returned HTTP {resp.status_code}",
+                status_code=resp.status_code,
+                raw_body_tail=resp.text[-500:],
+            )
+
+        parsed = _try_parse_jsonrpc(resp.text)
+        if parsed is None or "error" in parsed or not isinstance(parsed.get("result"), dict):
+            raise MCPClientError(
+                reason="protocol",
+                message="devclaw MCP initialize did not return a valid result",
+                raw_body_tail=resp.text[-500:],
+            )
+
+        # httpx headers are case-insensitive.
+        self._session_id = resp.headers.get("mcp-session-id")
+        negotiated = parsed["result"].get("protocolVersion")
+        if isinstance(negotiated, str) and negotiated:
+            self._protocol_version = negotiated
+
+        # Acknowledge initialization. Required by the spec before tools/call on
+        # a stateful server; best-effort — a hiccup here shouldn't sink the call
+        # (the tools/call self-heal will re-initialize if the session is bad).
+        note = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+        try:
+            await self._client.post(self._url, json=note, headers=self._headers())
+        except httpx.RequestError as exc:
+            _log.warning("mcp initialized-notification failed (continuing): %s", exc)
+
+        _log.info(
+            "mcp session established url=%s session=%s protocol=%s",
+            self._url,
+            (self._session_id[:8] + "…") if self._session_id else "(stateless)",
+            self._protocol_version,
+        )
 
     async def evaluate_goal(self, goal_id: str) -> dict[str, Any]:
         """L1 action — force a direction evaluation NOW on ``goal_id``.
@@ -225,7 +324,7 @@ class DevclawMCPClient:
         return await self._call_tool("fix_bug", args)
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """JSON-RPC ``tools/call`` wrapper.
+        """JSON-RPC ``tools/call`` wrapper, over an initialized MCP session.
 
         Devclaw's FastMCP exposes the standard MCP method names. Response
         shape is the MCP envelope::
@@ -237,24 +336,19 @@ class DevclawMCPClient:
 
         Devclaw's tool returns a JSON-stringified dict in the text content,
         so we json.loads the inner text to give the caller a real dict.
-        """
-        req_id = self._next_id
-        self._next_id += 1
-        body = {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        }
 
-        try:
-            resp = await self._client.post(self._url, json=body, headers=self._headers())
-        except httpx.RequestError as exc:
-            _log.warning("mcp transport error url=%s err=%s", self._url, exc)
-            raise MCPClientError(
-                reason="transport",
-                message=f"Could not reach devclaw MCP at {self._url}: {exc}",
-            ) from exc
+        Self-heals a dropped/expired session exactly once: on an HTTP 400/404
+        whose body names a session problem, we clear the session, re-initialize,
+        and retry the call a single time.
+        """
+        await self._ensure_session()
+        resp = await self._post_tool(name, arguments)
+
+        if _is_session_error(resp) and self._session_id is not None:
+            _log.info("mcp session rejected (status=%s) — re-initializing once", resp.status_code)
+            self._session_id = None
+            await self._ensure_session()
+            resp = await self._post_tool(name, arguments)
 
         if resp.status_code >= 400:
             _log.warning(
@@ -270,8 +364,6 @@ class DevclawMCPClient:
                 raw_body_tail=resp.text[-500:],
             )
 
-        # Streamable-http MAY return SSE for some calls. For tools/call with a
-        # JSON Accept, FastMCP returns plain JSON — parse defensively.
         body_text = resp.text
         parsed = _try_parse_jsonrpc(body_text)
         if parsed is None:
@@ -325,6 +417,35 @@ class DevclawMCPClient:
                 message=f"tool returned non-JSON text payload: {exc}",
                 raw_body_tail=text[-500:],
             ) from exc
+
+    async def _post_tool(self, name: str, arguments: dict[str, Any]) -> httpx.Response:
+        """POST a single ``tools/call`` and return the raw response (status
+        handling / self-heal live in :meth:`_call_tool`)."""
+        req_id = self._next_id
+        self._next_id += 1
+        body = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        try:
+            return await self._client.post(self._url, json=body, headers=self._headers())
+        except httpx.RequestError as exc:
+            _log.warning("mcp transport error url=%s err=%s", self._url, exc)
+            raise MCPClientError(
+                reason="transport",
+                message=f"Could not reach devclaw MCP at {self._url}: {exc}",
+            ) from exc
+
+
+def _is_session_error(resp: httpx.Response) -> bool:
+    """True if a response reads like a stale/missing MCP session — the signal
+    to re-initialize and retry once. FastMCP returns HTTP 400 ``Missing
+    session ID`` or 404 for an unknown session id."""
+    if resp.status_code not in (400, 404):
+        return False
+    return "session" in resp.text.lower()
 
 
 def _try_parse_jsonrpc(body_text: str) -> dict[str, Any] | None:
