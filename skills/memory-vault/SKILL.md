@@ -23,7 +23,7 @@ In order: `$MEMORY_VAULT` env var → `~/memory` → `/srv/memory`. Everything b
 python3 scripts/vault_scan.py [--vault $VAULT]
 ```
 
-Checks, per the contract: structure allowlist (parsed from the README's `vault-structure` block), broken wikilinks (report ≥3x targets — contract says write those pages or de-link), orphan wiki pages, missing frontmatter, legacy `last_updated`, per-project `plan.md`/`log.md`/`journal.md` completeness. Exit 0 = clean, 1 = findings. Run it before and after any multi-file change.
+Checks, per the contract: structure allowlist (parsed from the README's `vault-structure` block), broken wikilinks (report ≥3x targets — contract says write those pages or de-link), orphan wiki pages, missing frontmatter, legacy `last_updated`, per-project `plan.md`/`log.md`/`journal.md` completeness, empty folders, non-kebab / hashed filenames, missing category `INDEX.md` (≥2 pages), and runtime/code files under a knowledge dir (`*.jsonl`/`*.db`/`*.py`/`*.log`; `/tasks/`+`/runs/` scaffold excluded, `system/rotate-extras.py` allowlisted). Exit 0 = clean, 1 = findings. Run it before and after any multi-file change.
 
 ## 3. New-page checklist (all steps, every time)
 
