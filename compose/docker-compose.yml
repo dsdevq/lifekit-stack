@@ -466,6 +466,13 @@ services:
       # decomposer runs. Default off so legacy goals are unaffected; set
       # DEVCLAW_GOAL_FIRMING=1 in .env to enable per host.
       DEVCLAW_GOAL_FIRMING: ${DEVCLAW_GOAL_FIRMING:-0}
+      # Trace-retention window (volume hygiene): keep 7 days of the traces
+      # telemetry log instead of the code default of 30. This host is a single
+      # long-lived instance whose devclaw.db grows fast (200k+ trace rows / ~400MB
+      # observed 2026-07); 7 days is plenty of replay history while keeping the DB
+      # small. The heartbeat prunes older rows daily (batched, pure SQLite) and a
+      # weekly VACUUM reclaims the freed disk. `.env` can still override per host.
+      DEVCLAW_TRACE_RETENTION_DAYS: ${DEVCLAW_TRACE_RETENTION_DAYS:-7}
       # 20 min covers the decomposer's structured-YAML generation pass
       # (sometimes 5-10 min on Sonnet for rich done_when text). 90 s — the
       # planner default — is fine for next-action + evaluator calls but too
