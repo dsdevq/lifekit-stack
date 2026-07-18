@@ -69,11 +69,23 @@ RUN npm install -g \
       @agentclientprotocol/claude-agent-acp \
       @playwright/mcp@latest
 
+# ---- Playwright Chromium (runtime user, BEFORE the app clone) --------------
+# Pre-fetch the ~150MB browser so the done-gate E2E phase doesn't download it
+# on first use, AND so it stays cached across code-only rebuilds (it sits
+# before the cache-busted clone below). Installed as node -> /home/node/.cache.
+USER node
+RUN npx -y playwright@latest install chromium
+USER root
+
 # ---- DevClaw Python source -------------------------------------------------
 ARG DEVCLAW_REPO=https://github.com/dsdevq/devclaw.git
 ARG DEVCLAW_REF=main
+# CACHEBUST: pass --build-arg CACHEBUST=<sha> to force a fresh clone (and only
+# the clone + console-build + pip layers) WITHOUT --no-cache. Same value = cached.
+ARG CACHEBUST=none
 
-RUN git clone --depth 1 --branch "${DEVCLAW_REF}" "${DEVCLAW_REPO}" /app
+RUN echo "devclaw ${DEVCLAW_REF} @ ${CACHEBUST}" \
+ && git clone --depth 1 --branch "${DEVCLAW_REF}" "${DEVCLAW_REPO}" /app
 
 WORKDIR /app
 
@@ -108,9 +120,5 @@ EXPOSE 8000
 
 USER node
 
-# Pre-fetch the Playwright Chromium build into the runtime user's cache so
-# the done-gate E2E phase doesn't pay a ~150MB download on first invocation.
-# Lands in /home/node/.cache/ms-playwright.
-RUN npx -y playwright@latest install chromium
 
 CMD ["devclaw-mcp"]
