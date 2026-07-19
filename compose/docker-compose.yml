@@ -108,6 +108,11 @@ services:
       # (src/lib/storage.ts); map it to the same logs dir under ~/.life so
       # sessions persist and match the host/PC layout.
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/state/workout-claw:/home/node/.workout-claw
+      # nutrition-claw data store. Same $HOME hardcode pattern as workout-claw.
+      # This mount was missing when the CLI was linked into the persisted npm
+      # prefix (2026-06-20), so the in-container store was ephemeral and meal
+      # logs vanished on every recreate. Host dir is the canonical claw store.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/state/nutrition-claw:/home/node/.nutrition-claw
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -135,6 +140,9 @@ services:
         fi
         if ! command -v workout-claw >/dev/null 2>&1; then
           npm install -g /opt/workout-claw 2>&1 | tail -3
+        fi
+        if ! command -v nutrition-claw >/dev/null 2>&1; then
+          npm install -g /home/node/.openclaw/npm-global/lib/node_modules/@pita/nutrition-claw 2>&1 | tail -3
         fi
         exec "$$@"
       - --
