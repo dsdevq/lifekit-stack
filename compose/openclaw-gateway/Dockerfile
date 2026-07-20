@@ -68,13 +68,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Skill CLIs (nutrition-claw, life-state, workout-claw) are npm-linked into a
-# persisted prefix under the bind-mounted .openclaw volume. Codex runs tool
+# Skill CLIs (nutrition-claw, life-state, workout-claw) are installed by the
+# compose entrypoint guard into NPM_CONFIG_PREFIX=/home/node/.npm-global at
+# every container start (sources are bind mounts, so reinstall is instant). Codex runs tool
 # commands via `bash -lc` (login shell), whose PATH is rebuilt from /etc/profile
 # and drops the image ENV PATH, so the linked CLIs would otherwise be
 # "command not found" under the Codex runtime. This profile.d entry puts the
 # persisted bin dir on the login-shell PATH, durable across recreates/rebuilds.
-RUN printf 'export PATH="/home/node/.openclaw/npm-global/bin:$PATH"\n' > /etc/profile.d/zz-skill-clis.sh \
+RUN printf 'export PATH="/home/node/.npm-global/bin:$PATH"\n' > /etc/profile.d/zz-skill-clis.sh \
     && chmod 0644 /etc/profile.d/zz-skill-clis.sh
 
 USER node
