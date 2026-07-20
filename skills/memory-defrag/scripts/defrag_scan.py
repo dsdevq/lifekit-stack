@@ -39,9 +39,37 @@ WIKI_PREFIXES = (
 )
 LINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has",
-    "how", "in", "is", "it", "its", "not", "of", "on", "or", "over", "per",
-    "that", "the", "this", "to", "use", "when", "with", "vs", "via",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "has",
+    "how",
+    "in",
+    "is",
+    "it",
+    "its",
+    "not",
+    "of",
+    "on",
+    "or",
+    "over",
+    "per",
+    "that",
+    "the",
+    "this",
+    "to",
+    "use",
+    "when",
+    "with",
+    "vs",
+    "via",
 }
 
 
@@ -88,7 +116,9 @@ def tokens(rel, text):
     title = fm_field(fm, "title") or fm_field(fm, "name")
     base = os.path.splitext(os.path.basename(rel))[0]
     raw = " ".join([base.replace("-", " "), title, summary]).lower()
-    return {t for t in re.findall(r"[a-z0-9]+", raw) if len(t) > 2 and t not in STOPWORDS}
+    return {
+        t for t in re.findall(r"[a-z0-9]+", raw) if len(t) > 2 and t not in STOPWORDS
+    }
 
 
 def jaccard(a, b):
@@ -124,7 +154,9 @@ def scan(vault):
             continue
         n = text.count("\n") + 1
         if n > OVERSIZE_LINES:
-            findings.append(("oversized", "%s (%d lines; contract says propose a split)" % (rel, n)))
+            findings.append(
+                ("oversized", "%s (%d lines; contract says propose a split)" % (rel, n))
+            )
 
     # --- orphan sources (uncited by claims, unlinked by pages) ---
     cited = set(re.findall(r"sourceId:\s*(\S+)", "\n".join(pages.values())))
@@ -142,7 +174,13 @@ def scan(vault):
         sid = fm_field(fm, "id")
         base = os.path.splitext(os.path.basename(rel))[0].lower()
         if sid not in cited and base not in all_links:
-            findings.append(("orphan-source", "%s (id=%s: zero citing claims, zero inbound links)" % (rel, sid or "?")))
+            findings.append(
+                (
+                    "orphan-source",
+                    "%s (id=%s: zero citing claims, zero inbound links)"
+                    % (rel, sid or "?"),
+                )
+            )
 
     # --- INDEX drift (flat indexed categories) ---
     for cat in INDEXED_FLAT:
@@ -158,14 +196,18 @@ def scan(vault):
             if base == "INDEX":
                 continue
             if base.lower() not in indexed:
-                findings.append(("index-drift", "%s not linked from %s" % (rel, index_rel)))
+                findings.append(
+                    ("index-drift", "%s not linked from %s" % (rel, index_rel))
+                )
 
     return findings
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--vault", help="vault root (default: $MEMORY_VAULT, ~/memory, /srv/memory)")
+    ap.add_argument(
+        "--vault", help="vault root (default: $MEMORY_VAULT, ~/memory, /srv/memory)"
+    )
     args = ap.parse_args()
     vault = find_vault(args.vault)
 
