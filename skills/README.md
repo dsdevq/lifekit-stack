@@ -11,6 +11,8 @@ Two kinds of skills live here:
 | Skill | Purpose |
 |---|---|
 | `lifekit-router` | Route every user intent to the right capability module using `~/.life/system/modules.yaml` |
+| `memory-vault` | Operate the markdown memory vault: sync discipline, structure/link scanner (`vault_scan.py`), new-page checklist, log formats |
+| `memory-defrag` | Manual-first `/defrag` pass over the vault: dedupe/merge candidates, splits, INDEX drift, orphan sources (`defrag_scan.py`); propose-don't-apply for merges. No cron without a separate graded proposal |
 
 ## Personal skills (v0.x)
 
