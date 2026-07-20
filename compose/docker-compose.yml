@@ -113,6 +113,11 @@ services:
       # prefix (2026-06-20), so the in-container store was ephemeral and meal
       # logs vanished on every recreate. Host dir is the canonical claw store.
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}/state/nutrition-claw:/home/node/.nutrition-claw
+      # life-state data store. The CLI hardcodes $HOME/.life/state
+      # (src/lib/storage.ts) with no env override; same persistence pattern as
+      # the other two claws. Without this mount, daily state written in the
+      # container vanished on every recreate (broken since 2026-05-27).
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}/state/life-state:/home/node/.life/state
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -142,7 +147,10 @@ services:
           npm install -g /opt/workout-claw 2>&1 | tail -3
         fi
         if ! command -v nutrition-claw >/dev/null 2>&1; then
-          npm install -g /home/node/.openclaw/npm-global/lib/node_modules/@pita/nutrition-claw 2>&1 | tail -3
+          npm install -g /home/node/.openclaw/agents/health/workspace/skills/nutrition-claw 2>&1 | tail -3
+        fi
+        if ! command -v life-state >/dev/null 2>&1; then
+          npm install -g /home/node/.openclaw/agents/health/workspace/skills/life-state 2>&1 | tail -3
         fi
         exec "$$@"
       - --
