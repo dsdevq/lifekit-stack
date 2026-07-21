@@ -174,25 +174,14 @@ say "rebuilding devclaw-sandbox --no-cache (profile=build-only)"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
   --profile build-only build --no-cache devclaw-sandbox
 
-# ─── Rebuild devclaw-sandbox-dotnet (what production actually spawns) ────────
+# ─── Sandbox spawn image = the lean devclaw-sandbox (ADR 0005) ───────────────
 #
-# DEVCLAW_SANDBOX_IMAGE defaults to devclaw-sandbox-dotnet:local in compose —
-# the multi-runtime variant layered on the base sandbox via the devclaw repo's
-# .sandcastle/Dockerfile.dotnet. It has no compose service, so build it here
-# at the resolved SHA. No --no-cache needed: the base image rebuild above
-# already busts its FROM layer. (#93 — 2026-06-28→07-11: this image went two
-# weeks stale, shipping workers with no skills bundle, because nothing rebuilt
-# or verified it.)
-say "rebuilding devclaw-sandbox-dotnet (the image DEVCLAW_SANDBOX_IMAGE spawns)"
-docker tag devclaw-sandbox:local devclaw-sandbox:latest   # Dockerfile.dotnet's FROM
-DOTNET_CTX="$(mktemp -d)"
-DOTNET_REF="${DEVCLAW_SHA}"
-[[ "${DOTNET_REF}" == "unknown" ]] && DOTNET_REF="${DEVCLAW_REF_INPUT}"
-curl -fsS "https://raw.githubusercontent.com/dsdevq/devclaw/${DOTNET_REF}/.sandcastle/Dockerfile.dotnet" \
-  -o "${DOTNET_CTX}/Dockerfile.dotnet"
-docker build -t devclaw-sandbox-dotnet:local \
-  -f "${DOTNET_CTX}/Dockerfile.dotnet" "${DOTNET_CTX}"
-rm -rf "${DOTNET_CTX}"
+# The per-stack image family is retired (devclaw ADR 0005, gate passed live
+# 2026-07-21): Dockerfile.dotnet no longer exists upstream — the toolchain is
+# project-declared and mise-provisions in the runner pre-step. The base image
+# rebuilt above IS the spawn image; keep :latest aligned for devclaw's
+# code-default (DEVCLAW_SANDBOX_IMAGE unset ⇒ devclaw-sandbox:latest).
+docker tag devclaw-sandbox:local devclaw-sandbox:latest
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -289,10 +278,11 @@ MCP_MD5=$(docker run --rm --entrypoint md5sum devclaw-mcp:local \
 SBX_MD5=$(docker run --rm --entrypoint md5sum devclaw-sandbox:local \
   /opt/devclaw/runner.py | awk '{print $1}')
 # Verify the image tasks ACTUALLY run in — DEVCLAW_SANDBOX_IMAGE (compose
-# default: devclaw-sandbox-dotnet:local), not just the base it derives from.
-# This is the check whose absence hid the two-week staleness (#93).
+# default: devclaw-sandbox:local, the lean ADR 0005 image), not whatever else
+# happens to be tagged. This is the check whose absence hid the two-week
+# staleness (#93).
 SPAWN_IMAGE="$(grep -E '^DEVCLAW_SANDBOX_IMAGE=' "${ENV_FILE}" | tail -1 | cut -d= -f2- || true)"
-SPAWN_IMAGE="${SPAWN_IMAGE:-devclaw-sandbox-dotnet:local}"
+SPAWN_IMAGE="${SPAWN_IMAGE:-devclaw-sandbox:local}"
 SPAWN_MD5=$(docker run --rm --entrypoint md5sum "${SPAWN_IMAGE}" \
   /opt/devclaw/runner.py | awk '{print $1}')
 UPSTREAM_URL="https://raw.githubusercontent.com/dsdevq/devclaw/${DEVCLAW_SHA}/openhands-runner/runner.py"
