@@ -464,14 +464,13 @@ services:
       #     at /var/lib/devclaw/workspaces/<id>, sandcastle-runner swaps the
       #     prefix for the host's view of the same bind-mount so the
       #     spawned sandbox container can actually see it.
-      # devclaw-sandbox-dotnet is the multi-runtime variant (Python + Node +
-      # .NET 9 + .NET 10) — the right default now that the planning engine
-      # (Pillar 1) routes goals at any of the supported stacks. Operators can
-      # still set DEVCLAW_SANDBOX_IMAGE in the env to swap to a different
-      # variant per host. The bare devclaw-sandbox:local image stays alive
-      # as a fallback target; this just stops a fresh deploy from landing
-      # on a sandbox that lacks dotnet (2026-06-26 regression).
-      DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-devclaw-sandbox-dotnet:local}
+      # The lean harness image is the spawn default (devclaw ADR 0005): the
+      # per-stack toolchain (.NET etc.) is a project-declared fact, provisioned
+      # by mise in the runner pre-step and cached in a per-project volume —
+      # gate passed live 2026-07-21 (finance-sentry#291). The dotnet image
+      # variant is retired; a stack mise can't provision uses devclaw's
+      # per-project sandbox_image registry override, not a per-host env swap.
+      DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-devclaw-sandbox:local}
       # Pillar 1 (decomposer + checklist + per-item dispatch) is the default
       # cognition path. Off keeps the legacy backlog-only mode; set to 0 in
       # the env to opt out per host while migrating existing goals.
