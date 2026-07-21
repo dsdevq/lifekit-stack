@@ -21,6 +21,7 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 ARG CLAUDE_CLI_VERSION=2.1.139
 ARG CLAUDE_AGENT_ACP_VERSION=0.37.0
+ARG MISE_VERSION=v2026.7.11
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -46,6 +47,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxcomposite1 libxdamage1 libatspi2.0-0 libdrm2 libxkbcommon0 \
       libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
  && rm -rf /var/lib/apt/lists/*
+
+# Toolchain provisioning (ADR 0005) — ported from devclaw .sandcastle/Dockerfile
+# (the source of truth; keep in sync). The image ships NO language SDKs beyond
+# python+node: runner.py detects the project's declared toolchain and
+# `mise install`s it at task start, cached in a per-project volume mounted at
+# MISE_DATA_DIR by sandcastle.py. The apt list is the ONE place stack knowledge
+# legitimately remains — system libs mise can't install (the ICU/OpenSSL/krb5
+# set .NET runtimes need). Keep it small.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libicu-dev libssl3 libgssapi-krb5-2 \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL https://mise.run \
+      | MISE_VERSION=${MISE_VERSION} MISE_INSTALL_PATH=/usr/local/bin/mise sh \
+ && mise --version \
+ # Pre-create the cache-volume mountpoint owned by agent so docker's
+ # copy-on-first-mount gives fresh named volumes agent ownership (a root-owned
+ # volume would fail every `mise install`).
+ && mkdir -p /home/agent/.local/share/mise \
+ && chown -R agent:agent /home/agent/.local
 
 COPY --from=source /src/openhands-runner/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
@@ -82,6 +102,9 @@ WORKDIR /workspace
 ENV CLAUDE_CODE_EXECUTABLE=/usr/bin/claude \
     CLAUDE_CONFIG_DIR=/home/agent/.claude \
     HOME=/home/agent \
-    PATH=/usr/local/bin:/usr/bin:/bin
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    # explicit (matches the XDG default) — sandcastle.py mounts the per-project
+    # toolchain cache volume here; runner.py's provisioning pre-step fills it.
+    MISE_DATA_DIR=/home/agent/.local/share/mise
 
 ENTRYPOINT ["python3", "/opt/devclaw/runner.py"]
