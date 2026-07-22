@@ -488,6 +488,12 @@ services:
       # small. The heartbeat prunes older rows daily (batched, pure SQLite) and a
       # weekly VACUUM reclaims the freed disk. `.env` can still override per host.
       DEVCLAW_TRACE_RETENTION_DAYS: ${DEVCLAW_TRACE_RETENTION_DAYS:-7}
+      # Self-issue-filing Stage 1 (devclaw #348): at the once-per-cycle report
+      # edge, devclaw files its own RECURRING problems as GitHub issues on the
+      # devclaw repo and ages out stale ones. Zero-LLM; off unless the repo slug
+      # is set. Default off; set DEVCLAW_SELF_REPO=dsdevq/devclaw in .env to
+      # enable per host (same pattern as GOAL_FIRMING / GOAL_AUTOMERGE).
+      DEVCLAW_SELF_REPO: ${DEVCLAW_SELF_REPO:-}
       # 20 min covers the decomposer's structured-YAML generation pass
       # (sometimes 5-10 min on Sonnet for rich done_when text). 90 s — the
       # planner default — is fine for next-action + evaluator calls but too
