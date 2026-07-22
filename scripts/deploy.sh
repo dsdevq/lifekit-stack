@@ -101,20 +101,26 @@ fi
 
 DASHBOARD_DIR="${LIFEKIT_DASHBOARD_DIR:-/srv/lifekit-dashboard}"
 say "lifekit-dashboard: sync ${DASHBOARD_DIR}"
-# `git pull` runs from a non-interactive `sudo -u lifekit -H bash -lc "..."`
-# subshell, where gh's git-credential-helper cannot prompt. Bake the gh token
-# into the remote URL as x-access-token so plain `git pull` authenticates
-# headlessly. Idempotent: re-running just resets the URL to the same value.
+# The token is baked into the remote URL as x-access-token because this runs
+# from a non-interactive `sudo -u lifekit -H bash -lc "..."` subshell where gh's
+# git-credential-helper cannot prompt. Idempotent: re-running resets the URL to
+# the same value.
 TOKEN="$(gh auth token)"
-if [ -d "${DASHBOARD_DIR}/.git" ]; then
-  git -C "${DASHBOARD_DIR}" remote set-url origin \
-    "https://x-access-token:${TOKEN}@github.com/dsdevq/lifekit-dashboard.git"
-  git -C "${DASHBOARD_DIR}" pull --ff-only
-else
+if [ ! -d "${DASHBOARD_DIR}/.git" ]; then
   gh repo clone dsdevq/lifekit-dashboard "${DASHBOARD_DIR}"
-  git -C "${DASHBOARD_DIR}" remote set-url origin \
-    "https://x-access-token:${TOKEN}@github.com/dsdevq/lifekit-dashboard.git"
 fi
+git -C "${DASHBOARD_DIR}" remote set-url origin \
+  "https://x-access-token:${TOKEN}@github.com/dsdevq/lifekit-dashboard.git"
+# fetch + hard-reset, SAME rationale as the stack self-update above: a bare
+# `git pull --ff-only` aborts when the VPS clone has diverged or its local
+# branch config tracks more than one upstream — the exact "fatal: Cannot
+# fast-forward to multiple branches" that failed the deploy on 2026-07-22 and
+# then blocked EVERY subsequent deploy. Resetting to the resolved default
+# branch is race-proof and branch-agnostic, and self-heals the drifted state.
+DASH_DEFAULT="$(git -C "${DASHBOARD_DIR}" remote show origin | sed -n 's/.*HEAD branch: //p' | head -1)"
+DASH_DEFAULT="${DASH_DEFAULT:-main}"
+git -C "${DASHBOARD_DIR}" fetch -q origin "${DASH_DEFAULT}"
+git -C "${DASHBOARD_DIR}" reset -q --hard "origin/${DASH_DEFAULT}"
 
 # ─── modules.yaml → /srv/memory/system/ ───────────────────────────────────────
 
