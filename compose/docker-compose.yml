@@ -494,6 +494,16 @@ services:
       # is set. Default off; set DEVCLAW_SELF_REPO=dsdevq/devclaw in .env to
       # enable per host (same pattern as GOAL_FIRMING / GOAL_AUTOMERGE).
       DEVCLAW_SELF_REPO: ${DEVCLAW_SELF_REPO:-}
+      # Self-issue-filing tunables (devclaw #348). Declared so they're per-host
+      # overridable via .env (they only take effect when SELF_REPO is set):
+      #   MIN_CYCLES     — recurrence gate: file after a problem survives N cycles
+      #                    (default 3; set 1 in .env to file on the very next
+      #                    cycle-close, e.g. a one-night "see it fire" demo).
+      #   QUIET_DAYS     — auto-close an open issue after it's been quiet N days.
+      #   MAX_PER_CYCLE  — cap on NEW issues opened per cycle (noise budget).
+      DEVCLAW_SELF_ISSUE_MIN_CYCLES: ${DEVCLAW_SELF_ISSUE_MIN_CYCLES:-3}
+      DEVCLAW_SELF_ISSUE_QUIET_DAYS: ${DEVCLAW_SELF_ISSUE_QUIET_DAYS:-3}
+      DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE: ${DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE:-3}
       # 20 min covers the decomposer's structured-YAML generation pass
       # (sometimes 5-10 min on Sonnet for rich done_when text). 90 s — the
       # planner default — is fine for next-action + evaluator calls but too
