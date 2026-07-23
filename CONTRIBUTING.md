@@ -4,7 +4,7 @@ Thanks for thinking about contributing. This project is small, opinionated, and 
 
 ## Scope
 
-`lifekit-stack` is a deployment template for a personal-AI stack consisting of [OpenClaw](https://openclaw.ai/) + [lifekit](https://github.com/dsdevq/lifekit) + workspace skills, deployable to a Hetzner-style VPS via Docker Compose. That's it.
+`lifekit-stack` is a deployment template for a personal-AI stack consisting of [OpenClaw](https://openclaw.ai/) + [lifekit](https://github.com/lifekit-hq/lifekit) + workspace skills, deployable to a Hetzner-style VPS via Docker Compose. That's it.
 
 **In scope:**
 - Bug fixes in the bootstrap script, compose extras, deploy scripts, wizard integration.
@@ -32,7 +32,7 @@ If you want to extend scope, open an issue first to discuss.
 
 ```bash
 # Clone
-git clone https://github.com/dsdevq/lifekit-stack.git
+git clone https://github.com/lifekit-hq/lifekit-stack.git
 cd lifekit-stack
 
 # Install dev dependencies

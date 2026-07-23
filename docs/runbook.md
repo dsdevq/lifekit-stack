@@ -202,7 +202,7 @@ Hetzner CX22 → CX32 is a live resize (no data loss). For larger jumps, snapsho
 
 ## When to ask for help
 
-Open a [GitHub Issue](https://github.com/dsdevq/lifekit-stack/issues) with:
+Open a [GitHub Issue](https://github.com/lifekit-hq/lifekit-stack/issues) with:
 
 - `lifekit init-stack --version`
 - `docker compose version`
