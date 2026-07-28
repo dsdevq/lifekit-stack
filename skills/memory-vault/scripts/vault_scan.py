@@ -118,7 +118,9 @@ def main():
             )
             if m:
                 for a in m.group(1).split(","):
-                    aliases[a.strip().lower()] = rel
+                    a = a.strip().strip("\"'").lower()  # YAML list items are quoted
+                    if a:
+                        aliases[a] = rel
 
     inbound, broken = collections.Counter(), collections.Counter()
     no_fm, legacy = [], []
@@ -147,6 +149,8 @@ def main():
             t = m.group(1).strip()
             key = t.lower()
             base = key.split("/")[-1]
+            if base.endswith(".md"):  # links may carry the .md extension / a ../ path
+                base = base[:-3]
             if base in pages or key in paths or key + ".md" in paths or key in aliases:
                 inbound[pages.get(base, aliases.get(key, key))] += 1
             else:
@@ -212,7 +216,11 @@ def main():
         if rel_dir == ".":
             continue
         top = rel_dir.split(os.sep)[0]
-        if not [f for f in fns if not f.startswith(".")] and not dns:
+        if (
+            not [f for f in fns if not f.startswith(".")]
+            and not dns
+            and ".gitkeep" not in fns
+        ):
             findings.append(f"empty-folder: {rel_dir}/ has no files")
         for fn in fns:
             relf = os.path.join(rel_dir, fn)
