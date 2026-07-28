@@ -13,7 +13,7 @@ ARG DEVCLAW_REF=main
 
 FROM alpine/git AS source
 ARG DEVCLAW_REF
-ARG DEVCLAW_REPO=https://github.com/dsdevq/devclaw.git
+ARG DEVCLAW_REPO=https://github.com/lifekit-hq/devclaw.git
 RUN git clone --depth 1 --branch "${DEVCLAW_REF}" "${DEVCLAW_REPO}" /src
 
 FROM python:3.13-slim

@@ -322,7 +322,7 @@ services:
   lifekit-dashboard:
     <<: *policy
     # Read-only UI surfacing state from ~/.life and ~/.openclaw/workspace.
-    # Built from a VPS-local clone of dsdevq/lifekit-dashboard (see
+    # Built from a VPS-local clone of lifekit-hq/lifekit-dashboard (see
     # scripts/deploy.sh) so the stack repo doesn't vendor the dashboard tree.
     build:
       context: ${LIFEKIT_DASHBOARD_DIR:-/srv/lifekit-dashboard}
@@ -491,7 +491,7 @@ services:
       # Self-issue-filing Stage 1 (devclaw #348): at the once-per-cycle report
       # edge, devclaw files its own RECURRING problems as GitHub issues on the
       # devclaw repo and ages out stale ones. Zero-LLM; off unless the repo slug
-      # is set. Default off; set DEVCLAW_SELF_REPO=dsdevq/devclaw in .env to
+      # is set. Default off; set DEVCLAW_SELF_REPO=lifekit-hq/devclaw in .env to
       # enable per host (same pattern as GOAL_FIRMING / GOAL_AUTOMERGE).
       DEVCLAW_SELF_REPO: ${DEVCLAW_SELF_REPO:-}
       # Self-issue-filing tunables (devclaw #348). Declared so they're per-host

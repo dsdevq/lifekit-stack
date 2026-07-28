@@ -6,7 +6,7 @@
 #
 # Usage on the VPS as root (after SSHing in fresh):
 #
-#   curl -fsSL https://raw.githubusercontent.com/dsdevq/lifekit-stack/main/scripts/bootstrap-vps.sh | \
+#   curl -fsSL https://raw.githubusercontent.com/lifekit-hq/lifekit-stack/main/scripts/bootstrap-vps.sh | \
 #     sudo TAILSCALE_AUTH_KEY=tskey-auth-... TAILSCALE_HOSTNAME=lifekit-vps bash
 #
 # Or clone the repo first and run:
@@ -14,7 +14,7 @@
 #
 # Optional: set RUNNER_REG_TOKEN to also install the GitHub Actions
 # self-hosted runner. Fetch a fresh 1-hour token with:
-#   gh api -X POST /repos/dsdevq/lifekit-stack/actions/runners/registration-token --jq .token
+#   gh api -X POST /repos/lifekit-hq/lifekit-stack/actions/runners/registration-token --jq .token
 #
 # After this script: scp your .env to /srv/openclaw/config/.env, then run ./scripts/deploy.sh.
 
@@ -27,7 +27,7 @@ set -euo pipefail
 
 LIFEKIT_USER="${LIFEKIT_USER:-lifekit}"
 LIFEKIT_UID="${LIFEKIT_UID:-1000}"
-REPO_URL="${REPO_URL:-https://github.com/dsdevq/lifekit-stack.git}"
+REPO_URL="${REPO_URL:-https://github.com/lifekit-hq/lifekit-stack.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/srv/lifekit-stack}"
 

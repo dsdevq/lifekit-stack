@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# openclaw-config-sync.sh — mirror VPS openclaw config to dsdevq/openclaw-config.
+# openclaw-config-sync.sh — mirror VPS openclaw config to lifekit-hq/openclaw-config.
 # Pulls /srv/openclaw/config/openclaw.json + per-agent workspace .md files
 # into /srv/openclaw-config (a git clone), commits + pushes if changed.
 # Run as lifekit (has read access to /srv/openclaw/config/).

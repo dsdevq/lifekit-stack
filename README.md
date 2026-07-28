@@ -1,11 +1,11 @@
 # lifekit-stack
 
-> One-command personal-AI stack on your own VPS. Reference deployment for [lifekit](https://github.com/dsdevq/lifekit).
+> One-command personal-AI stack on your own VPS. Reference deployment for [lifekit](https://github.com/lifekit-hq/lifekit).
 
 `lifekit-stack` is a starter-template that deploys a complete personal-AI environment to a fresh VPS in under 15 minutes:
 
 - **[OpenClaw](https://openclaw.ai/)** — the runtime gateway (the `RuntimeGateway` adapter port). Chat bot, voice, scheduled briefs, conversational agent, workspace skills.
-- **[lifekit](https://github.com/dsdevq/lifekit)** — the Python framework that owns your `~/.life/` knowledge layer and the wizard.
+- **[lifekit](https://github.com/lifekit-hq/lifekit)** — the Python framework that owns your `~/.life/` knowledge layer and the wizard.
 - **Workspace skills** — opt-in skills bundled with this template (morning brief, learning coach, brainstorm, calendar/gmail integration, and more — see [`skills/`](./skills/)).
 - **Docker Compose + a single bash bootstrap script** — infrastructure-as-code. Reproducible from `git clone`.
 - **Mesh-VPN + loopback-only** — no public ingress, no domain, no TLS to manage. Outbound long-polling only.
@@ -27,7 +27,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `openclaw-gateway` | `lifekit-openclaw:local` (built from `compose/openclaw-gateway/`) | Runtime gateway — channels, cron, skills, agent. Loopback bind on `127.0.0.1:18789`. |
 | `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
 | `lifekit-orchestrator` | `lifekit-openclaw:local` | Long-running Python scheduler (`devclaw-orchestrator daemon`) that replaced the OpenClaw cron entries `task_dispatch_15m` and `curator_30m`. Editable-installed from the bind-mounted source on every container start to undo `pip install -e .` hijacks from code-task runners. |
-| `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
+| `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`lifekit-hq/lifekit-dashboard`](https://github.com/lifekit-hq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
 | `devclaw-mcp` | `devclaw-mcp:local` (built from `compose/devclaw-mcp/`) | DevClaw v2 autonomous coding runtime, exposed via streamable-http MCP. Spawns one `devclaw-sandbox` container per task via the host Docker socket. Internal-only. |
 | `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | Translates DevClaw's `notify_url` POST into a Telegram message via direct Bot API call. Internal-only on `:8090`. |
 | `ops-agent` | `ops-agent:local` (built from `ops-agent/`) | Resident watcher that polls DevClaw's goal store and records incidents when a goal trips the no-progress watchdog (O1). Read-only on the DevClaw substrate, write-only to its own incident log. ops-PR1 baseline: detect + log at L0; no Claude call, no auto-actions. Future PRs add O2/O3 + cognition. See [`ops-agent/README.md`](./ops-agent/README.md). |
@@ -110,7 +110,7 @@ The exact commands the maintainer runs against the reference deployment:
 pipx install lifekit
 
 # Clone this template
-git clone https://github.com/dsdevq/lifekit-stack.git
+git clone https://github.com/lifekit-hq/lifekit-stack.git
 cd lifekit-stack
 
 # Run the wizard — prompts you for tokens + identity, generates configs,
@@ -143,7 +143,7 @@ The compose bind-mounts (Claude session, `gh` config, `.gitconfig`) all resolve 
 
 ## Dashboard access
 
-The `lifekit-dashboard` service ships a read-only web UI surfacing state from `~/.life/` and `~/.openclaw/workspace/` (crons, tasks, proposals, PRs, gaps, recent runs). It is built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard) — `scripts/deploy.sh` handles the clone/pull, so `gh auth login` must already be set up on the host as the `lifekit` user.
+The `lifekit-dashboard` service ships a read-only web UI surfacing state from `~/.life/` and `~/.openclaw/workspace/` (crons, tasks, proposals, PRs, gaps, recent runs). It is built from a VPS-local clone of [`lifekit-hq/lifekit-dashboard`](https://github.com/lifekit-hq/lifekit-dashboard) — `scripts/deploy.sh` handles the clone/pull, so `gh auth login` must already be set up on the host as the `lifekit` user.
 
 The container binds to `127.0.0.1:${LIFEKIT_DASHBOARD_PORT:-18790}` only — no public ingress. External access goes through Tailscale serve. After `deploy.sh` succeeds, run once on the VPS:
 
@@ -155,7 +155,7 @@ The dashboard is then reachable at `https://<hostname>.<tailnet>.ts.net/` from a
 
 ## Auto-redeploy
 
-The `lifekit-dashboard` container auto-redeploys every 5 minutes from upstream `main` via a systemd timer (`lifekit-dashboard-redeploy.timer`). The timer is installed by `scripts/bootstrap-vps.sh`; the underlying script (`scripts/redeploy/lifekit-dashboard-redeploy.sh`) checks `dsdevq/lifekit-dashboard`'s `origin/main` against the local checkout and only rebuilds when there's a new commit (silent on no-op).
+The `lifekit-dashboard` container auto-redeploys every 5 minutes from upstream `main` via a systemd timer (`lifekit-dashboard-redeploy.timer`). The timer is installed by `scripts/bootstrap-vps.sh`; the underlying script (`scripts/redeploy/lifekit-dashboard-redeploy.sh`) checks `lifekit-hq/lifekit-dashboard`'s `origin/main` against the local checkout and only rebuilds when there's a new commit (silent on no-op).
 
 - **Force a redeploy now:** `sudo systemctl start lifekit-dashboard-redeploy.service`
 - **View recent runs:** `journalctl -u lifekit-dashboard-redeploy.service -n 50`
@@ -202,7 +202,7 @@ Setups outside the [Reference deployment](#reference-deployment) are not officia
 
 ## Related
 
-- [dsdevq/lifekit](https://github.com/dsdevq/lifekit) — the Python framework + wizard CLI this template uses.
+- [lifekit-hq/lifekit](https://github.com/lifekit-hq/lifekit) — the Python framework + wizard CLI this template uses.
 - [OpenClaw](https://openclaw.ai/) — the runtime gateway.
 - [The story behind it](#) — _coming soon: blog post on building a file-based framework for personal AI memory._
 

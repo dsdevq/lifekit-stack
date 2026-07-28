@@ -1,7 +1,7 @@
 # DevClaw MCP server container.
 #
 # Build context: this directory (compose/devclaw-mcp/).
-# The container clones dsdevq/devclaw at build time (public repo) and installs
+# The container clones lifekit-hq/devclaw at build time (public repo) and installs
 # the Python FastMCP server via pip. Node.js is retained from the base image
 # for the Claude CLI and claude-agent-acp.
 #
@@ -78,7 +78,7 @@ RUN npx -y playwright@latest install chromium
 USER root
 
 # ---- DevClaw Python source -------------------------------------------------
-ARG DEVCLAW_REPO=https://github.com/dsdevq/devclaw.git
+ARG DEVCLAW_REPO=https://github.com/lifekit-hq/devclaw.git
 ARG DEVCLAW_REF=main
 # CACHEBUST: pass --build-arg CACHEBUST=<sha> to force a fresh clone (and only
 # the clone + console-build + pip layers) WITHOUT --no-cache. Same value = cached.

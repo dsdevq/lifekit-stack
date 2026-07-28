@@ -95,7 +95,7 @@ fi
 
 # ─── lifekit-dashboard: VPS-local clone ──────────────────────────────────────
 #
-# The dashboard image is built from a VPS-local clone of dsdevq/lifekit-dashboard
+# The dashboard image is built from a VPS-local clone of lifekit-hq/lifekit-dashboard
 # (not vendored into this repo). gh CLI must be authed on the host as the
 # lifekit user so the private-repo clone works.
 
@@ -107,10 +107,10 @@ say "lifekit-dashboard: sync ${DASHBOARD_DIR}"
 # the same value.
 TOKEN="$(gh auth token)"
 if [ ! -d "${DASHBOARD_DIR}/.git" ]; then
-  gh repo clone dsdevq/lifekit-dashboard "${DASHBOARD_DIR}"
+  gh repo clone lifekit-hq/lifekit-dashboard "${DASHBOARD_DIR}"
 fi
 git -C "${DASHBOARD_DIR}" remote set-url origin \
-  "https://x-access-token:${TOKEN}@github.com/dsdevq/lifekit-dashboard.git"
+  "https://x-access-token:${TOKEN}@github.com/lifekit-hq/lifekit-dashboard.git"
 # fetch + hard-reset, SAME rationale as the stack self-update above: a bare
 # `git pull --ff-only` aborts when the VPS clone has diverged or its local
 # branch config tracks more than one upstream — the exact "fatal: Cannot
@@ -151,7 +151,7 @@ fi
 # message at the end.
 DEVCLAW_REF_INPUT="${DEVCLAW_REF:-main}"
 say "resolving devclaw ref ${DEVCLAW_REF_INPUT} → SHA (for logging)"
-DEVCLAW_SHA="$(git ls-remote https://github.com/dsdevq/devclaw.git \
+DEVCLAW_SHA="$(git ls-remote https://github.com/lifekit-hq/devclaw.git \
   "refs/heads/${DEVCLAW_REF_INPUT}" "refs/tags/${DEVCLAW_REF_INPUT}" \
   | awk 'NR==1{print $1}')"
 DEVCLAW_SHA="${DEVCLAW_SHA:-unknown}"
@@ -278,7 +278,7 @@ else:
 #       compose default still pointed at a long-merged feat branch).
 # Comparing both image files against the upstream SHA's runner.py
 # catches both at once.
-say "verifying runner.py matches dsdevq/devclaw@${DEVCLAW_REF_INPUT}"
+say "verifying runner.py matches lifekit-hq/devclaw@${DEVCLAW_REF_INPUT}"
 MCP_MD5=$(docker run --rm --entrypoint md5sum devclaw-mcp:local \
   /app/openhands-runner/runner.py | awk '{print $1}')
 SBX_MD5=$(docker run --rm --entrypoint md5sum devclaw-sandbox:local \
@@ -291,7 +291,7 @@ SPAWN_IMAGE="$(grep -E '^DEVCLAW_SANDBOX_IMAGE=' "${ENV_FILE}" | tail -1 | cut -
 SPAWN_IMAGE="${SPAWN_IMAGE:-devclaw-sandbox:local}"
 SPAWN_MD5=$(docker run --rm --entrypoint md5sum "${SPAWN_IMAGE}" \
   /opt/devclaw/runner.py | awk '{print $1}')
-UPSTREAM_URL="https://raw.githubusercontent.com/dsdevq/devclaw/${DEVCLAW_SHA}/openhands-runner/runner.py"
+UPSTREAM_URL="https://raw.githubusercontent.com/lifekit-hq/devclaw/${DEVCLAW_SHA}/openhands-runner/runner.py"
 UPSTREAM_MD5=$(curl -fsS "${UPSTREAM_URL}" | md5sum | awk '{print $1}')
 if [[ -z "${UPSTREAM_MD5}" || "${UPSTREAM_MD5}" == "d41d8cd98f00b204e9800998ecf8427e" ]]; then
   echo "✗ could not fetch upstream runner.py from ${UPSTREAM_URL}" >&2
