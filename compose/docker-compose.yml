@@ -497,11 +497,13 @@ services:
       # Self-issue-filing tunables (devclaw #348). Declared so they're per-host
       # overridable via .env (they only take effect when SELF_REPO is set):
       #   MIN_CYCLES     — recurrence gate: file after a problem survives N cycles
-      #                    (default 3; set 1 in .env to file on the very next
+      #                    (default 2 since devclaw's 2026-07-28 O1 amendment —
+      #                    the 3-cycle bar was never reached in production;
+      #                    set 1 in .env to file on the very next
       #                    cycle-close, e.g. a one-night "see it fire" demo).
       #   QUIET_DAYS     — auto-close an open issue after it's been quiet N days.
       #   MAX_PER_CYCLE  — cap on NEW issues opened per cycle (noise budget).
-      DEVCLAW_SELF_ISSUE_MIN_CYCLES: ${DEVCLAW_SELF_ISSUE_MIN_CYCLES:-3}
+      DEVCLAW_SELF_ISSUE_MIN_CYCLES: ${DEVCLAW_SELF_ISSUE_MIN_CYCLES:-2}
       DEVCLAW_SELF_ISSUE_QUIET_DAYS: ${DEVCLAW_SELF_ISSUE_QUIET_DAYS:-3}
       DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE: ${DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE:-3}
       # 20 min covers the decomposer's structured-YAML generation pass
