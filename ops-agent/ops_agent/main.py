@@ -38,6 +38,8 @@ import json
 import logging
 import signal
 import sys
+
+import httpx
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -48,11 +50,13 @@ from .classifiers import DevclawDefectMatch, classify_devclaw_defect
 from .cognition import CognitionError, call_claude
 from .config import OpsConfig, load_config
 from .detectors import (
+    DaemonLivenessDetector,
     NoProgressDetector,
     NoSteeringDetector,
     TrendSignalRepeatDetector,
     VerifyingStallDetector,
 )
+from .health_probe import HealthSnapshot, probe_health
 from .incident import Incident, IncidentStore
 from .mcp_client import DevclawMCPClient
 
@@ -543,6 +547,42 @@ async def _process_incident(
     _append_decision_log(log_path, incident, decision, outcome)
 
 
+def _post_text(url: str, text: str, *, timeout_s: float = 10.0) -> None:
+    """Fire one plain-text notify (the same relay shape devclaw uses)."""
+    httpx.post(url, json={"text": text}, timeout=timeout_s)
+
+
+async def _notify_o5(incident: Incident, folder: Path, cfg: OpsConfig) -> None:
+    """O5's whole action layer: one mechanical owner ping. ZERO cognition and
+    ping-only by decision (observability-maxout Resolved O1/O2) — when devclaw
+    itself may be down, an LLM playbook is the least trustworthy component in
+    the room, so O5 never consults one. Restart is a named follow-up gated on
+    O5 having correct detections on record."""
+    condition = str(incident.payload.get("condition", "unknown"))
+    detail = str(incident.payload.get("detail", ""))
+    text = f"🛑 [ops-agent O5] {condition}: {detail}"
+    delivered = False
+    error = ""
+    if cfg.notify_url:
+        try:
+            await asyncio.to_thread(_post_text, cfg.notify_url, text)
+            delivered = True
+        except Exception as exc:  # noqa: BLE001 — a dead relay must not kill the loop
+            error = f"{type(exc).__name__}: {exc}"
+            _log.warning("O5 notify failed (%s) — incident folder still has it", error)
+    else:
+        _log.warning("O5 %s (no OPS_AGENT_NOTIFY_URL — log + folder only)", text)
+    (folder / "outcome.md").write_text(
+        f"# O5 outcome — mechanical, ping-only\n\n"
+        f"- condition: {condition}\n"
+        f"- detail: {detail}\n"
+        f"- notify_url configured: {bool(cfg.notify_url)}\n"
+        f"- delivered: {delivered}\n"
+        + (f"- error: {error}\n" if error else "")
+        + "\nNo playbook, no cognition, no restart — Resolved O1 (ping-only first).\n"
+    )
+
+
 async def tick(
     cfg: OpsConfig,
     store: IncidentStore,
@@ -560,15 +600,47 @@ async def tick(
     MultiDetector abstraction) since the right interface for that will
     emerge only once we have more than two detectors to compare.
 
+    When ``cfg.health_url`` is set, the tick opens with ONE /health probe
+    (bounded, off-thread, never raises) whose snapshot feeds two things:
+
+      - the O5 daemon-liveness detector (``scan_health`` instead of the
+        goal-folder ``scan``) — its incidents bypass the cognition layer
+        entirely and go straight to the mechanical owner ping;
+      - the O3 held≠stalled suppression: while devclaw reports dispatch is
+        deliberately held (run window / operator hold), a "verifying-stall"
+        on a goal is the hold, not a wedge — suppressed BEFORE dedup so the
+        marker isn't burned and O3 can still fire after the window opens.
+
     For each new (non-deduped) incident:
       1. Write the L0 incident folder (detection record — defense in depth).
-      2. Run the playbook + action layer to fill in decision.json /
-         action.json / a richer outcome.md.
+      2. O5 → mechanical notify; everything else → the playbook + action
+         layer (decision.json / action.json / a richer outcome.md).
     """
     now = _utcnow()
+    health: HealthSnapshot | None = None
+    if cfg.health_url:
+        health = await asyncio.to_thread(
+            probe_health, cfg.health_url, timeout_s=cfg.health_timeout_s
+        )
     written = 0
     for detector in detectors:
-        for incident in detector.scan(cfg.goals_dir, now=now):
+        if isinstance(detector, DaemonLivenessDetector):
+            incidents = detector.scan_health(health, now=now)
+        else:
+            incidents = detector.scan(cfg.goals_dir, now=now)
+        for incident in incidents:
+            if (
+                incident.trigger == "O3"
+                and health is not None
+                and health.dispatch_open is False
+            ):
+                _log.info(
+                    "O3 suppressed goal=%s — dispatch deliberately held (%s); "
+                    "held is not stalled",
+                    incident.goal_id,
+                    health.dispatch_hold_reason or "no reason given",
+                )
+                continue
             if store.is_deduped(incident, now=now):
                 continue
             folder = store.write(incident)
@@ -579,6 +651,14 @@ async def tick(
                 folder,
             )
             written += 1
+            if incident.trigger == "O5":
+                try:
+                    await _notify_o5(incident, folder, cfg)
+                except Exception:  # defensive — same containment as cognition
+                    _log.exception(
+                        "O5 notify path crashed folder=%s — continuing", folder
+                    )
+                continue
             try:
                 await _process_incident(incident, folder, cfg.incidents_dir / "log.md", mcp, cfg)
             except Exception:  # defensive — never let one incident's cognition kill the loop
@@ -595,6 +675,13 @@ async def run_loop(cfg: OpsConfig, stop: asyncio.Event) -> None:
     # Register every detector here — order is significant only for the
     # order incidents appear in the log on a tick that lights up both.
     detectors: list[Any] = [
+        # O5 first: daemon health is judged before goal-level noise, and its
+        # probe result also drives the O3 held≠stalled suppression this tick.
+        DaemonLivenessDetector(
+            stale_factor=cfg.heartbeat_stale_factor,
+            renotify_s=cfg.o5_renotify_s,
+            cycle_report_max_age_h=cfg.o5_cycle_report_max_age_h,
+        ),
         NoProgressDetector(),
         NoSteeringDetector(),
         VerifyingStallDetector(),

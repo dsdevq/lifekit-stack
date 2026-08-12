@@ -656,6 +656,16 @@ services:
       # gracefully no-ops (safe default before the mount is added).
       OPS_AGENT_WORKSPACES_DIR: /data/workspaces
       OPS_AGENT_TREND_REPEAT_THRESHOLD: ${OPS_AGENT_TREND_REPEAT_THRESHOLD:-3}
+      # O5 (daemon-liveness dead-man, observability-maxout P1) — probe
+      # devclaw's token-free /health each tick; ping-only via the same
+      # notify-relay text passthrough devclaw uses (Resolved O1: no restart
+      # wired). The probe snapshot also drives the O3 held≠stalled
+      # suppression. Cycle-report dead-man armed at 26h — the nightly
+      # 22:00–05:00 window emits a report daily; >26h of silence means the
+      # window never ran or the report edge is broken.
+      OPS_AGENT_DEVCLAW_HEALTH_URL: ${OPS_AGENT_DEVCLAW_HEALTH_URL:-http://devclaw-mcp:8000/health}
+      OPS_AGENT_NOTIFY_URL: ${OPS_AGENT_NOTIFY_URL:-http://notify-relay:8090/text}
+      OPS_AGENT_O5_CYCLE_REPORT_MAX_AGE_H: ${OPS_AGENT_O5_CYCLE_REPORT_MAX_AGE_H:-26}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       # Devclaw's goal store lives in the shared devclaw-state volume at

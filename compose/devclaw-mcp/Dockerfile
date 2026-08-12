@@ -108,13 +108,21 @@ RUN pip install --break-system-packages --no-cache-dir .
 # ---- runtime config --------------------------------------------------------
 RUN mkdir -p /var/lib/devclaw
 
+# Build identity (devclaw #494): the redeploy script passes the deployed
+# commit + a build timestamp; devclaw surfaces both on /health + /node.json.
+# Empty on manual builds → devclaw reports null (honest absence, never "none").
+ARG GIT_SHA=""
+ARG BUILT_AT=""
+
 ENV DEVCLAW_TRANSPORT=http \
     DEVCLAW_PORT=8000 \
     DEVCLAW_DB=/var/lib/devclaw/devclaw.db \
     CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude \
     CLAUDE_CONFIG_DIR=/home/node/.claude \
     OPENHANDS_SUPPRESS_BANNER=1 \
-    DEVCLAW_SKILL_LIBRARY=/app/skill-library
+    DEVCLAW_SKILL_LIBRARY=/app/skill-library \
+    DEVCLAW_GIT_SHA=${GIT_SHA} \
+    DEVCLAW_BUILT_AT=${BUILT_AT}
 
 EXPOSE 8000
 

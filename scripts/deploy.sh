@@ -174,8 +174,14 @@ echo "  DEVCLAW_REF=${DEVCLAW_REF_INPUT}  DEVCLAW_SHA=${DEVCLAW_SHA}"
 # Built BEFORE the main `up -d --build` so the subsequent compose call
 # is a cache-hit no-op for these images.
 say "rebuilding devclaw-mcp --no-cache (avoid stale git-clone layer)"
+# Build identity (devclaw #494): bake the deployed SHA + timestamp so
+# /health can answer "which code is running" without ssh.
+DEVCLAW_SHA="$(git ls-remote https://github.com/dsdevq/devclaw.git main | cut -f1 || true)"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-  build --no-cache devclaw-mcp
+  build --no-cache \
+  --build-arg GIT_SHA="${DEVCLAW_SHA}" \
+  --build-arg BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  devclaw-mcp
 say "rebuilding devclaw-sandbox --no-cache (profile=build-only)"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
   --profile build-only build --no-cache devclaw-sandbox

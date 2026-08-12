@@ -97,6 +97,14 @@ def iter_goal_dirs(goals_dir: Path) -> Iterable[Path]:
     return (p for p in sorted(goals_dir.iterdir()) if p.is_dir() and not p.name.startswith("."))
 
 
+#: Phases where a goal is finished. A leftover ``no_progress_notified`` flag
+#: on a cancelled/done goal is history, not an incident — observed live
+#: 2026-08-12: two goals cancelled weeks earlier re-fired O1 daily (one
+#: cognition call each, deciding noop about a corpse). Terminal goals are
+#: skipped BEFORE the flag is even consulted.
+TERMINAL_PHASES = frozenset({"done", "cancelled", "achieved"})
+
+
 class NoProgressDetector:
     """Stateless detector — all state lives in the IncidentStore."""
 
@@ -112,6 +120,8 @@ class NoProgressDetector:
         for goal_dir in iter_goal_dirs(goals_dir):
             snap = read_snapshot(goal_dir)
             if snap is None or not snap.no_progress_notified:
+                continue
+            if snap.phase in TERMINAL_PHASES:
                 continue
             payload: dict[str, Any] = {
                 "objective": snap.objective,
