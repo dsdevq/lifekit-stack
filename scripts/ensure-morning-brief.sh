@@ -52,7 +52,9 @@ if docker exec "$GATEWAY" openclaw cron list --json 2>/dev/null \
   exit 0
 fi
 
-docker exec "$GATEWAY" openclaw cron add \
+# `cron run`/`cron runs` accept the job ID only (not the name) — capture it
+# from the add output (openclaw 2026.6.11 prints the created job as JSON).
+add_out="$(docker exec "$GATEWAY" openclaw cron add \
   --name "$JOB_NAME" \
   --description "Daily cross-project brief (repos + devclaw live state) with numbered select-to-dispatch recommendations" \
   --cron "$CRON_EXPR" --tz "$CRON_TZ" \
@@ -60,7 +62,13 @@ docker exec "$GATEWAY" openclaw cron add \
   --message "Morning brief: run the morning-brief skill in BRIEF mode end-to-end — sweep the repos with gh, read devclaw live state, persist briefs/latest.md plus the dated copy, and output the numbered brief as your final message." \
   --announce --channel telegram --to "$CHAT_ID" \
   --best-effort-deliver \
-  --timeout-seconds 900
+  --timeout-seconds 900)"
+echo "$add_out"
+job_id="$(printf '%s' "$add_out" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 
 echo "created cron '$JOB_NAME' ($CRON_EXPR @ $CRON_TZ → telegram:$CHAT_ID, agent:$AGENT)"
-echo "verify: docker exec $GATEWAY openclaw cron run $JOB_NAME && docker exec $GATEWAY openclaw cron runs --id $JOB_NAME"
+if [ -n "$job_id" ]; then
+  echo "verify: docker exec $GATEWAY openclaw cron run $job_id && docker exec $GATEWAY openclaw cron runs --id $job_id"
+else
+  echo "verify: docker exec $GATEWAY openclaw cron list   # find the '$JOB_NAME' job ID, then: openclaw cron run <id>"
+fi
