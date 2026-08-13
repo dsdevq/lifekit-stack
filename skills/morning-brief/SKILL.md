@@ -1,6 +1,6 @@
 ---
 name: morning-brief
-description: Daily cross-project morning brief delivered to Telegram - what shipped, what's in flight, what needs Denys, backlog head - across lifekit-hq/devclaw, lifekit-hq/lifekit-dashboard, lifekit-hq/finance-sentry plus live devclaw goal state, ending with numbered recommendations Denys can select by replying (e.g. "1 and 3"); selected items get dispatched to devclaw via the devclaw MCP. Fires from the morning-brief cron job; also triggers when Denys asks for a morning brief / status across projects, or replies to a brief with a selection.
+description: Daily cross-project morning brief delivered to Telegram - what shipped, what's in flight, what needs Denys, backlog head - across lifekit-hq/devclaw, lifekit-hq/lifekit-dashboard, dsdevq/finance-sentry plus live devclaw goal state, ending with numbered recommendations Denys can select by replying (e.g. "1 and 3"); selected items get dispatched to devclaw via the devclaw MCP. Fires from the morning-brief cron job; also triggers when Denys asks for a morning brief / status across projects, or replies to a brief with a selection.
 metadata:
   {
     "openclaw": { "requires": { "bins": ["gh"] } },
@@ -28,14 +28,17 @@ Two modes, decided by context:
 
 | Question | Source |
 |---|---|
-| What shipped? | `gh pr list --repo <r> --state merged --search "merged:>=<date-7d>"` |
+| What shipped by devclaw? | `gh pr list --repo <r> --state merged --search "\"Delivered by devclaw\" in:body merged:>=<date-7d>"` — every devclaw-delivered PR body carries the literal signature `Delivered by devclaw`; union in the same query with `label:devclaw` in place of the `in:body` clause (dedupe by number). A merged PR matching neither was merged by a human, NOT shipped by devclaw. |
+| Total merged (context) | `gh pr list --repo <r> --state merged --search "merged:>=<date-7d>"` — used only for the "plus <N> merged by others" line |
 | What's in flight? | `gh pr list --repo <r> --state open` |
 | What's in backlog? | `gh issue list --repo <r> --state open`, ordered P0 → P1 → P2 |
 | Trajectory | `PLAN.md` on main (product repos); `docs/proposals/` status lines (devclaw) |
 | What needs Denys live? | devclaw MCP `list_goals` — needs-you bucket only |
 
 The repo set (extend when a new repo becomes active):
-`lifekit-hq/devclaw` · `lifekit-hq/lifekit-dashboard` · `lifekit-hq/finance-sentry`.
+`lifekit-hq/devclaw` · `lifekit-hq/lifekit-dashboard` · `dsdevq/finance-sentry`
+(finance-sentry lives under **dsdevq**, not lifekit-hq — the wrong org here was
+the recurring "finance-sentry unreachable" diagnostic).
 
 Backlog convention (2026-08-12): **issues = not-yet-started work; PLAN.md
 milestones = shipped trajectory.** An issue graduates to a PLAN.md milestone
@@ -87,8 +90,9 @@ Morning brief — <YYYY-MM-DD>
 In flight (<n>)
 - [<repo>] PR #<n> "<title>" — open <n>d
 
-Shipped this week (<n>)
+Shipped by devclaw (<n>)
 - [<repo>] #<n> <title>
+plus <N> merged by others   (total merged minus devclaw-shipped; omit when 0)
 
 Backlog head
 - [<repo>] P1: #<n> <title>   (top items only, never the full list)
