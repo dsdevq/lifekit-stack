@@ -73,6 +73,30 @@ Exception: if the user explicitly asks "what's the status of task X" later, call
 
 If `devclaw` MCP isn't registered yet (still being built), say so plainly — don't pretend to dispatch.
 
+#### The intake doorway (single-intake-doorway, stage 1/2)
+
+Every ask headed for devclaw — from Denys OR from another agent — is first
+recorded through the `file_intake` MCP tool: it validates the ask, stamps
+provenance, files a `devclaw-intake` GitHub issue on the target registered
+project's repo, and returns the issue URL. **That URL is the durable receipt;
+always hand it back to whoever asked.**
+
+- **Ask from Denys:** call `file_intake` (project_id from `list_projects`,
+  what / done_when / context, `asker="denys"`, channel `telegram` or `chat`),
+  then dispatch on his explicit go — and include the intake issue URL in the
+  task/goal description so the delivery PR can close the issue.
+- **Ask from another agent (A2A — e.g. Ledger):** call `file_intake` with the
+  asking agent as `asker` and `channel="a2a"`, return the issue URL in your
+  A2A reply, and optionally ping Denys on Telegram. **NEVER call
+  `dispatch_task`/`create_goal`/`fix_bug`/`implement_feature` for a non-human
+  ask** — execution admission is Denys's alone; the issue waits for him.
+- If the target repo isn't a registered project, or `file_intake` isn't
+  available yet (older devclaw build), say so plainly — don't file anywhere
+  else and don't pretend the ask was recorded.
+
+Filing intake needs no confirmation (it only creates an issue); dispatching
+stays confirm-gated per the hard rules.
+
 ### Anything else
 
 If a domain isn't covered above and no installed skill applies, handle it conversationally using your built-in tools. Don't fabricate skills or MCP servers that don't exist.

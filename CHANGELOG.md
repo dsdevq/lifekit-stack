@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `defaults/agents/kit/workspace/AGENTS.md` — the single-intake-doorway contract (devclaw `docs/proposals/single-intake-doorway.md`, LOCKED 2026-08-13): every devclaw-bound ask is first recorded via the `file_intake` MCP tool (issue URL = the asker's durable receipt); non-human A2A asks (e.g. Ledger) may ONLY be filed, never dispatched — execution admission stays with Denys.
 - `compose/health-claw/` — new `health-claw` service wrapping `workout-claw` + `life-state` CLIs behind a streamable-http MCP on :8000. Register via `compose/health-claw/mcp-config.json` in `openclaw.json`.
 - `defaults/modules.yaml` — `health-claw` module entry with description and example intents.
 
