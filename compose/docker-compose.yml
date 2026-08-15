@@ -7,7 +7,9 @@
 #                          Invoke via: `docker compose --profile cli run --rm openclaw-cli <command>`
 #   lifekit-dashboard    — read-only web UI over ~/memory and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
-#   devclaw-mcp          — DevClaw v2 MCP server (autonomous coding via OpenHands); internal-only on :8000
+#   (devclaw-mcp + ops-agent run in devclaw's OWN compose project now — devclaw
+#    spec 005; this project keeps only the OpenClaw side + builds ops-agent's
+#    image build-only. Reached over the external `lifekit-shared` network.)
 #   notify-relay         — turns devclaw's notify_url POST into a Telegram message via the gateway CLI; internal-only on :8090
 #
 # Retired in the 2026-05-27 v2 cutover:
