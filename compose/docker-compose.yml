@@ -373,19 +373,19 @@ services:
   # devclaw-mcp and devclaw-sandbox were removed here on 2026-08-15: devclaw is
   # deployed from its own repo now (devclaw spec 005). devclaw-mcp + ops-agent
   # run in devclaw's OWN compose project (defined in the devclaw repo), and the
-  # sandbox image is pulled from ghcr by that project. This project only
-  # PRODUCES the ops-agent image (see the build-only ops-agent stub below) and
-  # keeps the OpenClaw services. The two projects integrate at runtime via the
-  # external `lifekit-shared` network and the external `devclaw-state` volume.
+  # sandbox image is pulled from ghcr by that project. This project keeps the
+  # OpenClaw services and only PRODUCES the ops-agent image; the two projects
+  # integrate at runtime via the external `lifekit-shared` network and the
+  # external `devclaw-state` volume.
 
-  # Build-only — ops-agent is never run as a long-lived service in THIS project.
-  # It publishes the ops-agent:local image, which is RUN by devclaw's OWN compose
-  # project (devclaw spec 005) alongside devclaw-mcp. Keep it here so
-  # `docker compose --profile build-only build ops-agent` still produces the
-  # image; the placeholder command never executes because it's not in `up`
-  # rotation. (Its runtime config — env/volumes/entrypoint/depends_on — moved to
-  # devclaw's project.) Mirrors how devclaw-sandbox used to be a build-only stub.
   ops-agent:
+    # Image-producer stub — ops-agent is not run as a long-lived service in THIS
+    # project. It publishes the ops-agent:local image, which is RUN by devclaw's
+    # OWN compose project (devclaw spec 005) alongside devclaw-mcp. Kept so
+    # `docker compose --profile build-only build ops-agent` still produces the
+    # image; the placeholder command never executes (not in `up` rotation). Its
+    # runtime config moved to devclaw's project. Mirrors the old devclaw-sandbox
+    # stub.
     profiles: ["build-only"]
     build:
       context: ../ops-agent

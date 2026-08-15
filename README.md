@@ -20,7 +20,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ## Services
 
-[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines eight always-on services plus `openclaw-cli` (gated behind the `cli` compose profile, on-demand only) and `devclaw-sandbox` (build-only image, never run as a daemon). All always-on services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines six services — one of which, `openclaw-cli`, is gated behind the `cli` compose profile (on-demand only) — plus a build-only `ops-agent` image stub that is produced here but **run by devclaw's own compose project** (devclaw spec 005). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo in that split, so they no longer appear below. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
 
 | Service | Image | Role |
 | --- | --- | --- |
@@ -28,9 +28,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
 | `lifekit-orchestrator` | `lifekit-openclaw:local` | Long-running Python scheduler (`devclaw-orchestrator daemon`) that replaced the OpenClaw cron entries `task_dispatch_15m` and `curator_30m`. Editable-installed from the bind-mounted source on every container start to undo `pip install -e .` hijacks from code-task runners. |
 | `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`lifekit-hq/lifekit-dashboard`](https://github.com/lifekit-hq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
-| `devclaw-mcp` | `devclaw-mcp:local` (built from `compose/devclaw-mcp/`) | DevClaw v2 autonomous coding runtime, exposed via streamable-http MCP. Spawns one `devclaw-sandbox` container per task via the host Docker socket. Internal-only. |
 | `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | Translates DevClaw's `notify_url` POST into a Telegram message via direct Bot API call. Internal-only on `:8090`. |
-| `ops-agent` | `ops-agent:local` (built from `ops-agent/`) | Resident watcher that polls DevClaw's goal store and records incidents when a goal trips the no-progress watchdog (O1). Read-only on the DevClaw substrate, write-only to its own incident log. ops-PR1 baseline: detect + log at L0; no Claude call, no auto-actions. Future PRs add O2/O3 + cognition. See [`ops-agent/README.md`](./ops-agent/README.md). |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
 ### Uniform service policy
