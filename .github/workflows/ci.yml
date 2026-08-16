@@ -75,15 +75,9 @@ jobs:
           docker compose -f compose/docker-compose.yml --env-file /srv/openclaw/config/.env ps \
             --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
 
-      # Post-deploy eval smoke (devclaw docs/proposals/continuous-eval-projection.md
-      # §5-O4): fire ONE eval ticket detached against the image just deployed —
-      # deploys are empirically when regressions land. The container detaches, so
-      # this step finishes in seconds; if the docker launch itself fails, the
-      # step fails loud. Opt out without a PR via the DEVCLAW_DEPLOY_SMOKE=0
-      # repo Actions variable.
-      - name: Eval smoke (1 ticket, detached)
-        env:
-          DEVCLAW_DEPLOY_SMOKE: ${{ vars.DEVCLAW_DEPLOY_SMOKE || '1' }}
-        run: |
-          cd /srv/lifekit-stack
-          bash scripts/deploy-smoke.sh
+      # (The post-deploy devclaw eval smoke was retired 2026-08-16: it targeted
+      # the devclaw-mcp service in THIS compose file, which left with spec 005 —
+      # every main deploy failed on "no such service" once the network was
+      # healed. It was cross-entity anyway (this stack smoke-testing devclaw
+      # against OpenClaw's env file); if revived, it belongs in devclaw's own
+      # deploy.yml as a post-deploy step against the `devclaw` project.)
