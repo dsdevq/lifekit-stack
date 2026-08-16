@@ -53,7 +53,16 @@ A lesson/rule discovered in a journal entry, incident, or session gets **promote
 
 The README carries a machine-readable `vault-structure` allowlist. **No new top-level folder or artifact pattern without a graded `proposals.md` entry first.** The scanner flags violations; do not "fix" a violation by adding it to the allowlist — file the proposal.
 
-## 8. Per-surface notes
+## 8. Rotation (README Rule 3 - deletion is normal, git history is the archive)
+
+The vault holds only living knowledge; aged state rotates out on TTLs instead of heroic one-off cleanups. Enforcement is split:
+
+- **Mechanical classes - auto-deleted weekly** by `scripts/memory-audit/vault-rotate.py` (wired into `memory-vault-audit.sh`, capped at 25 deletions/run): `bridge-*` machine dumps in `sources/` (delete on sight), superseded `audits/*-vault-audit.md` (keep exactly the newest), sources cited by zero claims 60+ days after ingest.
+- **Judgment classes - detected, never auto-deleted** (`vault-lint.py` findings; a session or the human applies them): `log.md` entries >90d → collapse into the file's Compacted-history block; `STATUS.md` untouched >14d → refresh or delete (outcome → plan.md); proposals ungraded >30d → grade or move to the Decisions record as `expired`; size caps (page <=300 lines, `proposals.md` <=250, ~120 living pages).
+
+In an interactive session that notices a TTL breach: apply the rotation inline, log it. If the human smells rot, the policy failed - fix the policy or these scripts, not just the instance.
+
+## 9. Per-surface notes
 
 - **Obsidian**: machine surfaces are hidden via `.obsidian/app.json` `userIgnoreFilters` (tracked — keep it updated when adding machine dirs). Use frontmatter `aliases:` for variant slugs; callouts (`> [!note]`) for banners.
 - **OpenClaw agents**: read `$VAULT/AGENTS.md` for the claims/evidence discipline; generated blocks between `<!-- openclaw:… -->` markers are plugin-owned.

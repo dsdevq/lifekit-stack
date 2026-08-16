@@ -13,8 +13,10 @@ import re
 import sys
 import json
 import glob
+import datetime
 
 VAULT = sys.argv[1] if len(sys.argv) > 1 else "/srv/memory"
+TODAY = datetime.date.today()
 findings = []
 
 
@@ -245,5 +247,107 @@ for name, f in pages.items():
             f,
             "no inbound [[links]] — link from an INDEX or related page",
         )
+
+# 8) rotation TTLs (README Rule 3) - JUDGMENT classes: detected here, applied by
+#    the human/agent, never by vault-rotate.py (which handles only the mechanical
+#    classes: bridge dumps, superseded audits, uncited stale sources).
+DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def days_old(iso):
+    try:
+        return (TODAY - datetime.date.fromisoformat(iso)).days
+    except ValueError:
+        return None
+
+
+# 8a) log entries past the 90-day compaction TTL
+for f in [f"{VAULT}/log.md"] + glob.glob(f"{VAULT}/projects/*/log.md"):
+    if not os.path.exists(f):
+        continue
+    dates = re.findall(
+        r"^## \[(\d{4}-\d{2}-\d{2})\]",
+        open(f, encoding="utf-8", errors="replace").read(),
+        re.M,
+    )
+    overdue = [d for d in dates if (days_old(d) or 0) > 90]
+    if overdue:
+        add(
+            "medium",
+            "log-rotation-due",
+            f,
+            f"{len(overdue)} entries older than 90d (oldest {min(overdue)}) - "
+            "collapse into the Compacted-history block",
+        )
+
+# 8b) STATUS.md staleness (14-day TTL while active)
+for f in glob.glob(f"{VAULT}/projects/*/STATUS.md"):
+    head, _ = fm(f)
+    m = head and re.search(r"^updatedAt:\s*[\"']?(\d{4}-\d{2}-\d{2})", head, re.M)
+    age = (
+        days_old(m.group(1))
+        if m
+        else (TODAY - datetime.date.fromtimestamp(os.path.getmtime(f))).days
+    )
+    if age is not None and age > 14:
+        add(
+            "medium",
+            "status-stale",
+            f,
+            f"STATUS.md untouched for {age}d - refresh it, or the project concluded "
+            "and it should be deleted (outcome → plan.md)",
+        )
+
+# 8c) proposals past the 30-day graded-or-die TTL
+prop = f"{VAULT}/system/proposals.md"
+if os.path.exists(prop):
+    body = open(prop, encoding="utf-8", errors="replace").read()
+    for m in re.finditer(
+        r"^### (\d{4}-\d{2}-\d{2})-([a-z0-9-]+)\n(?:.*\n){0,3}?.*\*\*Status:\*\*\s*(new|evaluating)",
+        body,
+        re.M,
+    ):
+        age = days_old(m.group(1))
+        if age is not None and age > 30:
+            add(
+                "medium",
+                "proposal-expired",
+                prop,
+                f"{m.group(1)}-{m.group(2)} open {age}d ungraded (TTL 30d) - grade it "
+                "or move to the Decisions record as expired",
+            )
+
+# 8d) size caps
+if os.path.exists(prop) and sum(1 for _ in open(prop, errors="replace")) > 250:
+    add(
+        "medium",
+        "size-cap",
+        prop,
+        "system/proposals.md exceeds the 250-line cap - compact to open items",
+    )
+living = 0
+for f in ALL:
+    r = rel(f)
+    if is_frozen(f) or r.startswith(("reports/", "state/", "scout/", "Clippings/")):
+        continue
+    living += 1
+    if r.startswith(
+        ("domains/", "projects/", "system/", "concepts/", "entities/", "syntheses/")
+    ) and not is_optional(f):
+        lines = sum(1 for _ in open(f, errors="replace"))
+        if lines > 300:
+            add(
+                "low",
+                "size-cap",
+                f,
+                f"{lines} lines (cap 300) - propose a split or compact",
+            )
+if living > 120:
+    add(
+        "info",
+        "size-cap",
+        ".",
+        f"{living} living pages (target ~120) - rotation is falling behind accretion",
+    )
 
 print(json.dumps(findings, indent=1))

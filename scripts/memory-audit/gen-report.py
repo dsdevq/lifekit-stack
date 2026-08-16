@@ -53,6 +53,10 @@ RULEDOC = {
     "orphan": "No inbound [[links]] — link from an INDEX or related page.",
     "project-triad": "projects/<name>/ missing a required plan/log/journal file.",
     "status-field-name": "STATUS.md uses updated: — align to updatedAt:.",
+    "log-rotation-due": "log.md entries older than 90d - collapse into the Compacted-history block (README Rule 3).",
+    "status-stale": "STATUS.md untouched >14d - refresh it, or the project concluded and it should be deleted.",
+    "proposal-expired": "Proposal open >30d ungraded - grade it or move to the Decisions record as expired.",
+    "size-cap": "Page/ledger/vault size over the contract cap - compact or split.",
 }
 
 out = []
@@ -67,8 +71,10 @@ out.append("---\n")
 out.append(f"# Vault Audit — {DATE}\n")
 out.append(
     "Two passes: plugin compile (typed layer) + contract-lint (structural layer). Each check maps to a "
-    "rule in [[README]]. Safe mechanical fixes are auto-applied; judgment-needed findings are left below "
-    "for you. Nothing is ever auto-deleted.\n"
+    "rule in [[README]]. Safe mechanical fixes AND the mechanical rotation classes (bridge dumps, "
+    "superseded audits, uncited stale sources) are auto-applied per the README rotation policy - git "
+    "history is the archive. Judgment classes (log compaction, STATUS staleness, proposal expiry, size "
+    "caps) are reported below, never auto-deleted.\n"
 )
 
 # Auto-fix section (what the agent handled this run)
@@ -129,13 +135,12 @@ for rule, items in by_rule.items():
 
 out.append("## Triage notes\n")
 out.append(
-    "- **system/ frontmatter backlog** (most of `missing-frontmatter`): the `system/` folder predates "
-    "the frontmatter convention. Batch-add `name/summary/updatedAt/status`."
+    "- **log-rotation-due**: needs an agent/human pass - collapse the aged entries into the file's "
+    "Compacted-history block (one line per arc-event); full detail stays in git history."
 )
 out.append(
-    "- **workspace-memory-ref** (info): `system/proposals.md` cites Kit workspace-memory slugs "
-    "(`feedback-*`, `user-*`) as `[[links]]`. Decide per-slug: promote durable rules into `concepts/`, "
-    "or drop the brackets. Not a weekly action item."
+    "- **proposal-expired**: graded-or-die - either grade it now or append a one-liner to the "
+    "Decisions record as `expired` and delete the body."
 )
 out.append(
     "- **malformed-frontmatter** (high): quote the `summary:`/`next:` scalars that contain colons."

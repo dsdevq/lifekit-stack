@@ -30,16 +30,17 @@ WIKI_PREFIXES = (
     "concepts/",
     "entities/",
     "syntheses/",
-    "lessons/",
 )
 WIKI_ROOTS = {
     "index.md",
     "log.md",
     "PLAN.md",
     "README.md",
+    "CORE.md",
     "AGENTS.md",
     "WIKI.md",
     "inbox.md",
+    "inbox-archive.md",
 }
 LINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 
@@ -205,10 +206,10 @@ def main():
         r"(?=[0-9a-f]*[a-f])[0-9a-f]{8,}"
     )  # bridge-*/uuid opaque tokens
     runtime_ext = (".jsonl", ".db", ".sqlite", ".log", ".py")
-    runtime_ok = {
-        os.path.join("system", "rotate-extras.py")
-    }  # documented mechanism exception
-    indexed = {"domains", "concepts", "entities", "syntheses", "system", "lessons"}
+    runtime_ok = (
+        set()
+    )  # rotation code evicted to lifekit-stack 2026-07-15; no exceptions remain
+    indexed = {"domains", "concepts", "entities", "syntheses", "system"}
 
     for dp, dns, fns in os.walk(vault):
         dns[:] = [d for d in dns if d not in SKIP_DIRS]
