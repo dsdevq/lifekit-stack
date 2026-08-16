@@ -27,7 +27,6 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `openclaw-gateway` | `lifekit-openclaw:local` (built from `compose/openclaw-gateway/`) | Runtime gateway — channels, cron, skills, agent. Loopback bind on `127.0.0.1:18789`. |
 | `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
 | `lifekit-orchestrator` | `lifekit-openclaw:local` | Long-running Python scheduler (`devclaw-orchestrator daemon`) that replaced the OpenClaw cron entries `task_dispatch_15m` and `curator_30m`. Editable-installed from the bind-mounted source on every container start to undo `pip install -e .` hijacks from code-task runners. |
-| `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`lifekit-hq/lifekit-dashboard`](https://github.com/lifekit-hq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
 | `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | Translates DevClaw's `notify_url` POST into a Telegram message via direct Bot API call. Internal-only on `:8090`. |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
@@ -38,13 +37,9 @@ Every service merges the `x-policy` anchor at the top of `compose/docker-compose
 - `init: true`
 - `restart: on-failure:5` — restart loop circuit-breaker; gives up after 5 consecutive failures instead of pinning a CPU forever.
 - `logging.driver: json-file` with `max-size: 50m` and `max-file: 3` — caps each service's on-disk log footprint at ~150MB.
-- `deploy.resources.limits.memory: 1g` — per-service ceiling. Individual services override (gateway 2g, dashboard/openclaw-cli/orchestrator/google-mcp 512m).
+- `deploy.resources.limits.memory: 1g` — per-service ceiling. Individual services override (gateway 2g, openclaw-cli/orchestrator/google-mcp 512m).
 
 Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded log + no memory cap on a runaway agent loop ate the disk and pinned RAM until the host froze. The host also gained a **2 GB `/swapfile`** as a second line of defense; `scripts/bootstrap-vps.sh` provisions it.
-
-### Dashboard read-only guard
-
-The dashboard's `~/.life` and `~/.openclaw/workspace` bind-mounts are both declared `:ro` in `compose/docker-compose.yml`. The dashboard service itself surfaces this contract by returning **HTTP 503** on any write attempt against the mounted volumes — the UI is observation-only by design, and the filesystem-level read-only mount is the enforcement.
 
 ## Monitoring
 
@@ -123,7 +118,7 @@ Full walkthrough: [`docs/quickstart.md`](./docs/quickstart.md).
 ```
 lifekit-stack/
 ├── compose/              # docker-compose.yml, Dockerfiles, OpenClaw sources
-├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw, redeploy/ (systemd units)
+├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
 ├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills
 ├── .github/workflows/    # CI: lint, template tests, semver releases — runs on the VPS self-hosted runner
@@ -141,24 +136,13 @@ The compose bind-mounts (Claude session, `gh` config, `.gitconfig`) all resolve 
 
 ## Dashboard access
 
-The `lifekit-dashboard` service ships a read-only web UI surfacing state from `~/.life/` and `~/.openclaw/workspace/` (crons, tasks, proposals, PRs, gaps, recent runs). It is built from a VPS-local clone of [`lifekit-hq/lifekit-dashboard`](https://github.com/lifekit-hq/lifekit-dashboard) — `scripts/deploy.sh` handles the clone/pull, so `gh auth login` must already be set up on the host as the `lifekit` user.
-
-The container binds to `127.0.0.1:${LIFEKIT_DASHBOARD_PORT:-18790}` only — no public ingress. External access goes through Tailscale serve. After `deploy.sh` succeeds, run once on the VPS:
+The lifekit-dashboard web UI is **not part of this stack anymore** — it deploys from its own repo ([`lifekit-hq/lifekit-dashboard`](https://github.com/lifekit-hq/lifekit-dashboard), see its `deploy/`) as its own `dashboard` compose project, integrated with this stack only through read-only host mounts (ecosystem decoupling, 2026-08-16). It still binds loopback-only on `127.0.0.1:18790`; external access goes through Tailscale serve:
 
 ```bash
 sudo tailscale serve --bg --https=443 / http://127.0.0.1:18790
 ```
 
 The dashboard is then reachable at `https://<hostname>.<tailnet>.ts.net/` from any device on your tailnet. `tailscale serve status` lists the resulting URL.
-
-## Auto-redeploy
-
-The `lifekit-dashboard` container auto-redeploys every 5 minutes from upstream `main` via a systemd timer (`lifekit-dashboard-redeploy.timer`). The timer is installed by `scripts/bootstrap-vps.sh`; the underlying script (`scripts/redeploy/lifekit-dashboard-redeploy.sh`) checks `lifekit-hq/lifekit-dashboard`'s `origin/main` against the local checkout and only rebuilds when there's a new commit (silent on no-op).
-
-- **Force a redeploy now:** `sudo systemctl start lifekit-dashboard-redeploy.service`
-- **View recent runs:** `journalctl -u lifekit-dashboard-redeploy.service -n 50`
-
-This is currently scoped to `lifekit-dashboard` only. A generic, config-driven multi-repo version will land when a second repo needs the same treatment.
 
 ## Updating
 

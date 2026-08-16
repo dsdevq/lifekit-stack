@@ -5,8 +5,9 @@
 #   openclaw-cli         — same image, sharing the gateway's netns for one-shot `openclaw <command>` invocations.
 #                          On-demand only (compose profile `cli`); not started by `docker compose up -d`.
 #                          Invoke via: `docker compose --profile cli run --rm openclaw-cli <command>`
-#   lifekit-dashboard    — read-only web UI over ~/memory and ~/.openclaw/workspace; loopback bind on 18790
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
+#   (lifekit-dashboard runs in its OWN compose project now — deployed from
+#    lifekit-hq/lifekit-dashboard's deploy/; ecosystem decoupling slice 2.)
 #   (devclaw-mcp + ops-agent run in devclaw's OWN compose project now — devclaw
 #    spec 005; this project keeps only the OpenClaw side + builds ops-agent's
 #    image build-only. Reached over the external `lifekit-shared` network.)
@@ -327,48 +328,11 @@ services:
       retries: 5
       start_period: 60s
 
-  lifekit-dashboard:
-    <<: *policy
-    # Read-only UI surfacing state from ~/.life and ~/.openclaw/workspace.
-    # Built from a VPS-local clone of lifekit-hq/lifekit-dashboard (see
-    # scripts/deploy.sh) so the stack repo doesn't vendor the dashboard tree.
-    build:
-      context: ${LIFEKIT_DASHBOARD_DIR:-/srv/lifekit-dashboard}
-    image: lifekit-dashboard:local
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-    environment:
-      # The dashboard middleware reads OPENCLAW_GATEWAY_TOKEN (not a
-      # dashboard-specific name) so it can validate gateway-issued requests
-      # against the same shared secret openclaw-gateway uses.
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      ASPNETCORE_URLS: http://+:8080
-      LIFEKIT_LIFE_ROOT: /life
-      LIFEKIT_STATE_DIR: /life-state
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/life:ro
-      - ${LIFEKIT_STATE_DIR_HOST:-/var/lib/lifekit}:/life-state:ro
-      - ${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}:/openclaw-workspace:ro
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
-    ports:
-      - "127.0.0.1:${LIFEKIT_DASHBOARD_PORT:-18790}:8080"
-    healthcheck:
-      test:
-        - CMD
-        - bash
-        - -c
-        - "exec 3<>/dev/tcp/127.0.0.1/8080"
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+  # lifekit-dashboard was removed here on 2026-08-16: the dashboard deploys
+  # from its own repo now (lifekit-hq/lifekit-dashboard deploy/ — ecosystem
+  # decoupling slice 2). It runs as its own `dashboard` compose project with
+  # its own ghcr image, env file (/srv/dashboard/.env) and workflow_dispatch
+  # deploy; the 5-minute redeploy timer this repo used to install is retired.
 
   # devclaw-mcp and devclaw-sandbox were removed here on 2026-08-15: devclaw is
   # deployed from its own repo now (devclaw spec 005). devclaw-mcp + ops-agent
