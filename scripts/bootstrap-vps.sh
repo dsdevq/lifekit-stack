@@ -149,17 +149,12 @@ else
   sudo -u "$LIFEKIT_USER" git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
 
-# ─── Auto-redeploy timer for lifekit-dashboard ────────────────────────────────
-
-say "Installing lifekit-dashboard auto-redeploy script + systemd units"
-install -m 755 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.sh" \
-  /usr/local/bin/lifekit-dashboard-redeploy.sh
-install -m 644 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.service" \
-  /etc/systemd/system/lifekit-dashboard-redeploy.service
-install -m 644 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.timer" \
-  /etc/systemd/system/lifekit-dashboard-redeploy.timer
-systemctl daemon-reload
-systemctl enable --now lifekit-dashboard-redeploy.timer
+# (The lifekit-dashboard auto-redeploy timer was retired 2026-08-16 — the
+# dashboard deploys from its own repo's workflow now; ecosystem decoupling
+# slice 2. Removal from an already-bootstrapped host:
+#   systemctl disable --now lifekit-dashboard-redeploy.timer
+#   rm -f /etc/systemd/system/lifekit-dashboard-redeploy.{timer,service} \
+#         /usr/local/bin/lifekit-dashboard-redeploy.sh && systemctl daemon-reload)
 
 # ─── openclaw-config sync timer ───────────────────────────────────────────────
 
