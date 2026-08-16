@@ -13,8 +13,11 @@ import re
 import sys
 import json
 import glob
+import datetime
+import subprocess
 
 VAULT = sys.argv[1] if len(sys.argv) > 1 else "/srv/memory"
+TODAY = datetime.date.today()
 findings = []
 
 
@@ -126,6 +129,10 @@ for f in ALL:
             f,
             "uses last_updated: — rename to updatedAt:",
         )
+    # Frozen surfaces are verbatim evidence: auto-fix is forbidden to touch them,
+    # so flagging them weekly is permanent noise with no possible consumer.
+    if is_frozen(f):
+        continue
     offenders = yaml_offenders(head)
     if offenders:
         add(
@@ -148,6 +155,93 @@ for f in glob.glob(f"{VAULT}/projects/*/STATUS.md"):
             "status-field-name",
             f,
             "STATUS.md uses updated: — align to updatedAt:",
+        )
+
+# 4b) stale STATUS.md — active but untouched past the 14d rotation trigger
+UPDATED_AT = re.compile(r"^updatedAt:\s*[\"']?(\d{4}-\d{2}-\d{2})", re.M)
+STATUS_FIELD = re.compile(r"^status:\s*[\"']?(\S+)", re.M)
+
+
+def fm_date(head):
+    m = UPDATED_AT.search(head or "")
+    if not m:
+        return None
+    try:
+        return datetime.date.fromisoformat(m.group(1))
+    except ValueError:
+        return None
+
+
+for f in glob.glob(f"{VAULT}/projects/*/STATUS.md"):
+    head, _ = fm(f)
+    st = STATUS_FIELD.search(head or "")
+    if st and st.group(1) in ("archived", "concluded"):
+        continue
+    d = fm_date(head)
+    if d and (TODAY - d).days > 14:
+        add(
+            "medium",
+            "stale-status",
+            f,
+            f"active STATUS.md untouched for {(TODAY - d).days}d (>14d rotation "
+            "trigger) — refresh it or conclude the project into plan.md",
+        )
+
+
+# 4c) canvas drift — an architecture canvas older than the pages it depicts
+def canvas_date(f):
+    try:
+        out = subprocess.run(
+            ["git", "-C", VAULT, "log", "-1", "--format=%cs", "--", rel(f)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout.strip()
+        if out:
+            return datetime.date.fromisoformat(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return datetime.date.fromtimestamp(os.path.getmtime(f))
+
+
+def sibling_page_date(dirpath):
+    dates = []
+    for name in ("plan.md", "architecture.md"):
+        p = os.path.join(dirpath, name)
+        if os.path.exists(p):
+            d = fm_date(fm(p)[0])
+            if d:
+                dates.append(d)
+    return max(dates) if dates else None
+
+
+for cv in sorted(glob.glob(f"{VAULT}/projects/*/*.canvas")):
+    pages = sibling_page_date(os.path.dirname(cv))
+    cvd = canvas_date(cv)
+    if pages and (pages - cvd).days > 14:
+        add(
+            "medium",
+            "canvas-drift",
+            cv,
+            f"project pages moved {(pages - cvd).days}d past this canvas — "
+            "re-verify the diagram against plan.md/architecture.md",
+        )
+for cv in sorted(glob.glob(f"{VAULT}/system/*.canvas")):
+    newest = [
+        d
+        for p in sorted(glob.glob(f"{VAULT}/projects/*"))
+        if glob.glob(f"{p}/*.canvas")
+        for d in [sibling_page_date(p)]
+        if d
+    ]
+    cvd = canvas_date(cv)
+    if newest and (max(newest) - cvd).days > 14:
+        add(
+            "medium",
+            "canvas-drift",
+            cv,
+            f"project pages moved {(max(newest) - cvd).days}d past this map — "
+            "re-verify the overview canvas",
         )
 
 # 5) deprecated path forms in FORWARD-LOOKING content
