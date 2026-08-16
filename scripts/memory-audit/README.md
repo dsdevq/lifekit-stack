@@ -1,8 +1,11 @@
-# memory-audit — weekly vault audit + safe auto-fix
+# memory-audit — weekly vault audit + safe auto-fix + Rule-3 rotation
 
 Run by the OpenClaw cron `memory_vault_audit` (Sun 03:30 Europe/Dublin) as a
-deterministic `--command` job. Deploy-copied to the gateway workspace mount
-(`/home/node/.openclaw/workspace/memory-audit/`); this is the source of truth.
+deterministic `--command` job. The cron executes from the gateway workspace
+mount (`/home/node/.openclaw/workspace/memory-audit/`, host path
+`/srv/openclaw/workspace/memory-audit/`); `deploy.sh` rsyncs this directory
+there on every deploy (tests/ excluded). This repo dir is the source of truth —
+never edit the workspace copy by hand.
 
 - `memory-vault-audit.sh` — wrapper: auto-fix → `openclaw wiki compile` (Pass 1)
   → `vault-rotate.py` (Rule-3 rotation, uses the fresh claims cache)

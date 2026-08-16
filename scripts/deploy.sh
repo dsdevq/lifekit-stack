@@ -62,6 +62,21 @@ STACK_DEFAULT="${STACK_DEFAULT:-main}"
 git fetch -q origin "${STACK_DEFAULT}"
 git reset -q --hard "origin/${STACK_DEFAULT}"
 
+# ─── memory-audit: sync cron assets to the gateway workspace ─────────────────
+#
+# The weekly `memory_vault_audit` cron runs INSIDE the gateway container from
+# the workspace mount — it cannot see this repo. Without this sync the cron
+# keeps executing whatever was last hand-copied (found 2026-08-16: the box ran
+# 2-month-stale scripts). Placed BEFORE the compose step on purpose so script
+# drift heals even on a deploy that fails later.
+# NOTE (ecosystem decoupling): when the OpenClaw entity gets its own deploy
+# script, this block migrates there — the audit cron is an OpenClaw cron.
+
+say "memory-audit sync (repo -> gateway workspace)"
+AUDIT_DST="${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}/memory-audit"
+mkdir -p "${AUDIT_DST}"
+rsync -a --delete --exclude tests/ "${REPO_DIR}/scripts/memory-audit/" "${AUDIT_DST}/"
+
 # ─── OpenClaw onboard (first deploy only) ────────────────────────────────────
 #
 # A fresh host has no /srv/openclaw/config/openclaw.json — without it the
