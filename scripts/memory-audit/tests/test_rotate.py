@@ -374,5 +374,69 @@ class TestDeprecatedPathIsLineScoped(Fixture):
         self.assertIn("line 7", hits[0]["detail"])
 
 
+class TestStaleProposalSurfacing(Fixture):
+    """Age decides who looks; status only decides deletion vs nag.
+
+    rotate expires `new` only. Everything else past the TTL must show up as a
+    lint finding, or a status string silently suspends the deadline — which is
+    how `accepted in principle (...); execution decisions still ungraded` sat
+    33 days invisible to both.
+    """
+
+    LEDGER = (
+        "---\nname: proposals\n---\n\n# System Improvement Proposals\n\n"
+        "## Open proposals\n\n"
+        f"### {days_ago(45)}-never-looked-at\n- **Status:** new\n"
+        "- **What + why:** x.\n\n"
+        f"### {days_ago(45)}-in-review\n- **Status:** evaluating\n"
+        "- **What + why:** x.\n\n"
+        f"### {days_ago(33)}-principle-only\n"
+        "- **Status:** accepted in principle (2026-07-19); execution ungraded\n"
+        "- **What + why:** x.\n\n"
+        f"### {days_ago(5)}-fresh\n- **Status:** new\n- **What + why:** x.\n\n"
+        "## Decisions record\n\n- 2026-08-06 prior -> adopted\n"
+    )
+
+    def lint(self):
+        return run(LINT, self.vault)
+
+    def test_status_that_dodges_rotation_is_flagged(self):
+        write(self.vault, "system/proposals.md", self.LEDGER)
+        stale = [f for f in self.lint() if f["rule"] == "stale-proposal"]
+        slugs = sorted(f["detail"].split(":")[0] for f in stale)
+        # days_ago(45) sorts before days_ago(33)
+        self.assertEqual(
+            [f"{days_ago(45)}-in-review", f"{days_ago(33)}-principle-only"], slugs
+        )
+
+    def test_rotation_and_lint_are_exhaustive_past_the_ttl(self):
+        write(self.vault, "system/proposals.md", self.LEDGER)
+        flagged = {
+            f["detail"].split(":")[0]
+            for f in self.lint()
+            if f["rule"] == "stale-proposal"
+        }
+        expired = {
+            a["detail"].split(":")[0]
+            for a in self.rotate()
+            if a["action"] == "expire-proposal"
+        }
+        # every over-TTL entry is handled by exactly one of the two
+        over_ttl = {
+            f"{days_ago(45)}-never-looked-at",
+            f"{days_ago(45)}-in-review",
+            f"{days_ago(33)}-principle-only",
+        }
+        self.assertEqual(over_ttl, flagged | expired)
+        self.assertEqual(set(), flagged & expired)
+
+    def test_fresh_proposal_is_left_alone(self):
+        write(self.vault, "system/proposals.md", self.LEDGER)
+        stale = [f for f in self.lint() if f["rule"] == "stale-proposal"]
+        self.assertNotIn(
+            f"{days_ago(5)}-fresh", [f["detail"].split(":")[0] for f in stale]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

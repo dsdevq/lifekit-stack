@@ -341,6 +341,73 @@ for f in ALL:
                 "(canonical ~/memory/ | /srv/memory/); dated records keep it verbatim",
             )
 
+# 5b) open proposals past the graded-or-die TTL that rotation will NOT expire.
+# vault-rotate.py mechanically expires exactly one status — `new`, meaning
+# "never looked at". Everything else past the TTL is a judgment call and
+# surfaces HERE instead of being deleted: auto-deleting a proposal that is
+# actively `evaluating`, or one accepted in principle, is hostile, and
+# vault-rotate's own contract keeps judgment classes out of deletion.
+#
+# The point is that the two are exhaustive between them. Before 2026-08-21 a
+# status could suspend the deadline outright: `accepted in principle (...);
+# execution decisions still ungraded` sat 33 days invisible to rotation AND to
+# the report, because the deadline keyed on a status string rather than on age.
+# Now age decides who looks, and status only decides whether the answer is
+# deletion or a nag.
+PROPOSAL_TTL_DAYS = 30
+PROP_HEAD = re.compile(r"^### (\d{4}-\d{2}-\d{2})-(\S+)\s*$")
+ROTATABLE_STATUS = re.compile(r"^- \*\*Status:\*\*\s*new\b", re.I)
+STATUS_ANY = re.compile(r"^- \*\*Status:\*\*\s*(.+?)\s*$")
+
+_prop = os.path.join(VAULT, "system", "proposals.md")
+if os.path.exists(_prop):
+    _lines = open(_prop, encoding="utf-8", errors="replace").read().split("\n")
+    _open_i = next(
+        (i for i, ln in enumerate(_lines) if ln.startswith("## Open proposals")), None
+    )
+    _dec_i = next(
+        (i for i, ln in enumerate(_lines) if ln.startswith("## Decisions record")),
+        len(_lines),
+    )
+    if _open_i is not None:
+        i = _open_i
+        while i < _dec_i:
+            m = PROP_HEAD.match(_lines[i])
+            if not m:
+                i += 1
+                continue
+            end = i + 1
+            while end < _dec_i and not _lines[end].startswith(("### ", "## ")):
+                end += 1
+            try:
+                age = (TODAY - datetime.date.fromisoformat(m.group(1))).days
+            except ValueError:
+                age = None
+            body = _lines[i:end]
+            if (
+                age is not None
+                and age > PROPOSAL_TTL_DAYS
+                and not any(ROTATABLE_STATUS.match(ln) for ln in body)
+            ):
+                st = next(
+                    (
+                        sm.group(1)
+                        for ln in body
+                        if (sm := STATUS_ANY.match(ln)) is not None
+                    ),
+                    "(no Status line)",
+                )
+                add(
+                    "medium",
+                    "stale-proposal",
+                    "system/proposals.md",
+                    f"{m.group(1)}-{m.group(2)}: open {age}d with status '{st}' — "
+                    "past the 30d graded-or-die TTL and not mechanically "
+                    "expirable; grade it or move it to the Decisions record",
+                )
+            i = end
+
+
 # 6) content pages missing frontmatter
 for sub in ("domains", "system", "concepts", "entities", "syntheses"):
     for f in glob.glob(f"{VAULT}/{sub}/**/*.md", recursive=True):
