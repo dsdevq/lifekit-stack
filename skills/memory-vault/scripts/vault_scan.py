@@ -3,6 +3,7 @@
 
 The vault's README.md is the contract; this script mechanizes its lint rules:
   - structure allowlist   (README ```vault-structure fenced block)
+  - scope coverage        (every allowlist entry is classified; no path is silently unlinted)
   - broken wikilinks      (>=3x targets are contract violations: write or de-link)
   - orphan wiki pages     (no inbound [[links]]; runtime artifacts excluded)
   - missing frontmatter   (wiki-layer pages)
@@ -23,24 +24,26 @@ import re
 import sys
 
 SKIP_DIRS = {".git", ".obsidian", ".openclaw-wiki"}
-WIKI_PREFIXES = (
-    "domains/",
-    "projects/",
-    "system/",
-    "concepts/",
-    "entities/",
-    "syntheses/",
-    "lessons/",
-)
-WIKI_ROOTS = {
-    "index.md",
-    "log.md",
-    "PLAN.md",
-    "README.md",
-    "AGENTS.md",
-    "WIKI.md",
-    "inbox.md",
+
+# Scope is DERIVED from the README structure allowlist, not from a parallel
+# hand-maintained list. Every allowlist entry must land in exactly one class
+# below; anything unclassified is a finding, never a silent skip. That
+# inversion is the point: "protected" and "unchecked" must not be the same
+# state, and a directory nobody classified must not read as clean.
+OPAQUE_DIRS = {"state", "scout", "Clippings"}  # runtime surfaces, contract-opaque
+GENERATED_DIRS = {"reports", "audits"}  # machine-written; no orphan/frontmatter lint
+EVIDENCE_DIRS = {"sources"}  # immutable; cited by claims[], not by wikilinks
+WIKI_DIRS = {
+    "domains",
+    "projects",
+    "system",
+    "concepts",
+    "entities",
+    "syntheses",
 }
+DATA_ROOTS = {"topics.yaml"}  # root non-markdown config
+# Link targets that are not markdown pages but are legitimately wikilinked.
+LINKABLE_EXT = (".md", ".canvas", ".base")
 LINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 
 
@@ -71,11 +74,55 @@ def read_allowlist(vault):
     }
 
 
+def derive_scope(vault, allow):
+    """Split the allowlist into scope classes, reporting drift in both directions.
+
+    Returns (wiki_prefixes, wiki_roots, indexed_dirs, findings). A path in the
+    allowlist that no class claims is reported rather than skipped; a class that
+    names a path the allowlist no longer carries is reported too, so a scope rule
+    cannot outlive the directory it describes (that is how `lessons/` lingered
+    after the directory was merged into `concepts/`).
+    """
+    findings = []
+    classed = OPAQUE_DIRS | GENERATED_DIRS | EVIDENCE_DIRS | WIKI_DIRS | DATA_ROOTS
+
+    root_md = {e for e in allow if e.endswith(".md")}
+    dirs = {e for e in allow if not e.endswith(".md") and e not in DATA_ROOTS}
+
+    for entry in sorted(dirs):
+        if entry not in classed:
+            findings.append(
+                f"scope-unclassified: '{entry}' is allowlisted but no scan class claims it — "
+                "classify it (wiki/generated/evidence/opaque) or it goes unlinted silently"
+            )
+    for entry in sorted(classed - allow):
+        findings.append(
+            f"scope-stale: scan class names '{entry}' but the allowlist no longer carries it — "
+            "drop the rule with the directory"
+        )
+
+    # Unclassified dirs default to wiki scope: an unknown path gets MORE lint,
+    # never less, so the finding above is the only way it stays quiet.
+    wiki_dirs = (WIKI_DIRS | (dirs - classed)) & dirs
+    wiki_prefixes = tuple(sorted(d + "/" for d in wiki_dirs))
+    indexed = {d for d in wiki_dirs if os.path.isdir(os.path.join(vault, d))}
+    return wiki_prefixes, root_md, indexed, findings
+
+
 def walk_md(vault):
     for dp, dns, fns in os.walk(vault):
         dns[:] = [d for d in dns if d not in SKIP_DIRS]
         for fn in fns:
             if fn.endswith(".md"):
+                yield os.path.relpath(os.path.join(dp, fn), vault)
+
+
+def walk_linkable(vault):
+    """Non-markdown wikilink targets (Obsidian canvases, Bases views)."""
+    for dp, dns, fns in os.walk(vault):
+        dns[:] = [d for d in dns if d not in SKIP_DIRS]
+        for fn in fns:
+            if fn.endswith(LINKABLE_EXT) and not fn.endswith(".md"):
                 yield os.path.relpath(os.path.join(dp, fn), vault)
 
 
@@ -101,12 +148,25 @@ def main():
                     f"structure: top-level '{entry}' not in allowlist — needs a graded proposal (contract: structure freeze)"
                 )
 
+    if allow is None:
+        # No machine-readable freeze: fall back to the wiki dirs we know, and say so.
+        wiki_prefixes = tuple(sorted(d + "/" for d in WIKI_DIRS))
+        wiki_roots, indexed = set(), set(WIKI_DIRS)
+    else:
+        wiki_prefixes, wiki_roots, indexed, scope_findings = derive_scope(vault, allow)
+        findings += scope_findings
+
     # -- index pages + links
     pages, paths = {}, set()
     for rel in walk_md(vault):
         paths.add(rel.lower())
         paths.add(rel[:-3].lower())
         pages.setdefault(os.path.basename(rel)[:-3].lower(), rel)
+    for rel in walk_linkable(vault):  # canvases/bases are link targets, not pages
+        paths.add(rel.lower())
+        paths.add(os.path.splitext(rel)[0].lower())
+        paths.add(os.path.basename(rel).lower())
+        paths.add(os.path.splitext(os.path.basename(rel))[0].lower())
 
     aliases = {}
     for rel in walk_md(vault):
@@ -125,11 +185,11 @@ def main():
     inbound, broken = collections.Counter(), collections.Counter()
     no_fm, legacy = [], []
     for rel in walk_md(vault):
-        is_wiki = rel.startswith(WIKI_PREFIXES) or rel in WIKI_ROOTS
+        is_wiki = rel.startswith(wiki_prefixes) or rel in wiki_roots
         text = open(os.path.join(vault, rel), encoding="utf-8", errors="replace").read()
         if (
             is_wiki
-            and rel not in WIKI_ROOTS
+            and rel not in wiki_roots
             and "index" not in os.path.basename(rel).lower()
         ):
             if (
@@ -163,7 +223,7 @@ def main():
             )
     for rel in sorted(pages.values()):
         if (
-            not rel.startswith(WIKI_PREFIXES)
+            not rel.startswith(wiki_prefixes)
             or "index" in os.path.basename(rel).lower()
         ):
             continue
@@ -208,7 +268,6 @@ def main():
     runtime_ok = {
         os.path.join("system", "rotate-extras.py")
     }  # documented mechanism exception
-    indexed = {"domains", "concepts", "entities", "syntheses", "system", "lessons"}
 
     for dp, dns, fns in os.walk(vault):
         dns[:] = [d for d in dns if d not in SKIP_DIRS]
@@ -236,7 +295,7 @@ def main():
                     )
             if (
                 fn.endswith(runtime_ext)
-                and (top + "/") in WIKI_PREFIXES
+                and (top + "/") in wiki_prefixes
                 and relf not in runtime_ok
                 and "/tasks/" not in relf
                 and "/runs/"
