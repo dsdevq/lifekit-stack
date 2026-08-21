@@ -3,9 +3,13 @@
 the memory-wiki plugin cannot do. Read-only; emits JSON findings to stdout.
 Dependency-free (no PyYAML) so it runs host- or container-side.
 
-Honors the README contract: sources/journal/audits/incidents/goal-archive and
-dated proposals/tasks/runs are FROZEN (verbatim historical evidence); recon/
-conversation/findings/etc. are OPTIONAL artifacts not part of the contract.
+Exemptions are IMMUTABLE-only: sources/ (clipped evidence) and audits/
+(generated reports), plus the dated per-project scaffolds proposals/tasks/runs.
+Those are content no fix may touch, so a finding on them has no consumer.
+Nothing is exempted merely for being unowned — unowned is the thing to surface.
+Every exemption is validated against the README structure allowlist and its size
+is reported weekly, so one cannot go unnoticed. recon/conversation/findings/etc.
+are OPTIONAL artifacts not part of the contract.
 """
 
 import os
@@ -49,8 +53,17 @@ def rel(f):
     return os.path.relpath(f, VAULT)
 
 
-FROZEN_PREFIX = ("sources/", "journal/", "audits/", "incidents/", "goal-archive/")
-FROZEN_SEG = ("/proposals/", "/proposals-approved/", "/tasks/", "/runs/")
+# IMMUTABLE = content no fix may touch, so weekly findings on it have no
+# consumer. This list is deliberately short. A path does NOT belong here for
+# being curated, protected, or merely unowned: `journal/` sat in this tuple for
+# three months as "verbatim evidence" while actually holding unowned agent
+# narrative, and the exemption made it invisible to the only scheduled linter.
+# Removed 2026-08-21 along with `incidents/` and `goal-archive/`, which named
+# directories the vault does not have.
+IMMUTABLE_PREFIX = ("sources/", "audits/")
+# Dated per-project scaffolds — contract-optional dirs (projects/INDEX.md), so
+# they may legitimately be absent from disk without the rule being stale.
+IMMUTABLE_SEG = ("/proposals/", "/tasks/", "/runs/")
 OPT_BASENAMES = {
     "recon.md",
     "conversation.md",
@@ -72,7 +85,9 @@ ROOT_RUNTIME = {"inbox.md", "log.md"}
 
 def is_frozen(f):
     r = rel(f)
-    return r.startswith(FROZEN_PREFIX) or any(seg in "/" + r for seg in FROZEN_SEG)
+    return r.startswith(IMMUTABLE_PREFIX) or any(
+        seg in "/" + r for seg in IMMUTABLE_SEG
+    )
 
 
 def is_optional(f):
@@ -81,6 +96,57 @@ def is_optional(f):
 
 def skip_content(f):
     return is_frozen(f) or is_optional(f) or os.path.basename(f) in INDEXISH
+
+
+def read_allowlist():
+    """Top-level entries from the README ```vault-structure block (the freeze)."""
+    try:
+        txt = open(os.path.join(VAULT, "README.md"), encoding="utf-8").read()
+    except OSError:
+        return None
+    m = re.search(r"```vault-structure\n(.*?)```", txt, re.S)
+    if not m:
+        return None
+    return {
+        ln.strip().rstrip("/")
+        for ln in m.group(1).splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    }
+
+
+# 0) exemption hygiene — an exemption must name a path the contract still
+# recognizes, and must state its own size every week. An exemption nobody can
+# see is how `journal/` went three months without a single finding.
+_allow = read_allowlist()
+if _allow is not None:
+    for pref in IMMUTABLE_PREFIX:
+        if pref.rstrip("/") not in _allow:
+            add(
+                "medium",
+                "stale-exemption",
+                pref,
+                f"'{pref}' is exempt from lint but is not in the README structure "
+                "allowlist — drop the exemption with the directory",
+            )
+
+_exempt = [f for f in ALL if is_frozen(f)]
+if _exempt:
+    _by = {}
+    for f in _exempt:
+        r = rel(f)
+        key = next(
+            (p for p in IMMUTABLE_PREFIX if r.startswith(p)),
+            next((s2.strip("/") + "/" for s2 in IMMUTABLE_SEG if s2 in "/" + r), "?"),
+        )
+        _by[key] = _by.get(key, 0) + 1
+    add(
+        "info",
+        "exemption-census",
+        ".",
+        "lint exemptions this run: "
+        + ", ".join(f"{k} {v} file(s)" for k, v in sorted(_by.items()))
+        + " — immutable content only; anything else must be linted",
+    )
 
 
 # dependency-free YAML sanity: a top-level "key: value" whose unquoted value
@@ -286,6 +352,14 @@ for f in (
 pages = {}
 for f in ALL:
     pages.setdefault(os.path.splitext(os.path.basename(f))[0], f)
+# Canvases and Bases views are legitimate wikilink targets but are not pages:
+# they resolve links without being orphan-checked themselves. Without this a
+# live [[system/lifekit-map.canvas]] counts as a broken link every week.
+NON_PAGE_TARGETS = {
+    os.path.splitext(os.path.basename(f))[0]
+    for ext in ("canvas", "base")
+    for f in glob.glob(f"{VAULT}/**/*.{ext}", recursive=True)
+}
 inbound = {n: 0 for n in pages}
 broken = {}
 linkre = re.compile(r"\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]")
@@ -297,6 +371,8 @@ for f in ALL:
         base = os.path.splitext(os.path.basename(tgt.strip()))[0]
         if base in inbound:
             inbound[base] += 1
+        elif base in NON_PAGE_TARGETS:
+            continue  # live canvas/base target
         elif base != self_base:
             broken[base] = broken.get(base, 0) + 1
 
