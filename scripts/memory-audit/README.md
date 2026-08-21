@@ -19,7 +19,11 @@ never edit the workspace copy by hand.
   `audits/` keep-exactly-one · `log.md` entries >90d collapse into the
   "Compacted history" block · `sources/` pages ≥60d with zero citing claims and
   zero wiki references are deleted · `system/proposals.md` entries still `new`
-  after 30d move to the Decisions record as `expired` (graded-or-die).
+  after 30d move to the Decisions record as `expired` (graded-or-die). Only
+  `new` expires mechanically; any OTHER status past the TTL is a judgment call
+  and surfaces as a `stale-proposal` lint finding instead — age decides who
+  looks, status only decides deletion-vs-nag, so no status string can suspend
+  the deadline silently.
   Deletion happens ONLY inside these classes — git history is the archive.
   Judgment classes (stale STATUS, concluded-project folds) are never rotated
   here; they surface as lint findings. `--dry-run` prints the action JSON
