@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for vault-rotate.py (README Rule 3 mechanical rotation) and the new
-vault-lint.py rules (frozen-noise suppression, stale-status, canvas-drift).
+vault-lint.py rules (immutable-surface suppression, exemption hygiene,
+stale-status, canvas-drift).
 stdlib-only; each test builds a fixture vault in a tmpdir and runs the real
 scripts via subprocess, exactly as the weekly cron does."""
 
@@ -260,6 +261,77 @@ class TestLintRules(Fixture):
         )
         write(self.vault, "projects/demo/architecture.canvas", '{"nodes":[]}')
         self.assertNotIn("canvas-drift", [f["rule"] for f in self.lint()])
+
+
+ALLOWLIST_README = (
+    "# contract\n\n"
+    "```vault-structure\n"
+    "# top-level directories\n"
+    "audits\nconcepts\ndomains\nprojects\nreports\nsources\nstate\nsystem\n"
+    "# root files\nREADME.md\nindex.md\nlog.md\n"
+    "```\n"
+)
+
+
+class TestExemptionHygiene(Fixture):
+    """An exemption must name a live contract path and state its own size.
+
+    `journal/` was exempt as "verbatim evidence" for three months while holding
+    unowned agent narrative; nothing in the weekly report ever said so.
+    """
+
+    def lint(self):
+        return run(LINT, self.vault)
+
+    def test_unowned_dir_is_linted_not_exempt(self):
+        bad = "---\nname: x\nsummary: broken: colon value\n---\nbody\n"
+        write(self.vault, "README.md", ALLOWLIST_README)
+        write(self.vault, "journal/2026-01-01.md", bad)
+        rules = [(f["rule"], f["path"]) for f in self.lint()]
+        self.assertIn(("malformed-frontmatter", "journal/2026-01-01.md"), rules)
+
+    def test_immutable_surfaces_still_exempt(self):
+        bad = "---\nname: x\nsummary: broken: colon value\n---\nbody\n"
+        write(self.vault, "README.md", ALLOWLIST_README)
+        write(self.vault, "sources/2026-01-01-clip.md", bad)
+        write(self.vault, "system/live-page.md", bad)
+        rules = [(f["rule"], f["path"]) for f in self.lint()]
+        self.assertIn(("malformed-frontmatter", "system/live-page.md"), rules)
+        self.assertNotIn(("malformed-frontmatter", "sources/2026-01-01-clip.md"), rules)
+
+    def test_exemption_census_reports_what_was_skipped(self):
+        write(self.vault, "README.md", ALLOWLIST_README)
+        write(self.vault, "sources/2026-01-01-clip.md", "# clip\n")
+        write(self.vault, "sources/2026-01-02-clip.md", "# clip\n")
+        census = [f for f in self.lint() if f["rule"] == "exemption-census"]
+        self.assertEqual(1, len(census), census)
+        self.assertEqual("info", census[0]["severity"])
+        self.assertIn("sources/ 2 file(s)", census[0]["detail"])
+
+    def test_exemption_naming_a_dropped_dir_is_flagged(self):
+        readme = ALLOWLIST_README.replace("sources\n", "")
+        write(self.vault, "README.md", readme)
+        write(self.vault, "sources/2026-01-01-clip.md", "# clip\n")
+        stale = [f for f in self.lint() if f["rule"] == "stale-exemption"]
+        self.assertEqual(1, len(stale), stale)
+        self.assertIn("sources/", stale[0]["path"])
+
+    def test_live_canvas_target_is_not_a_broken_link(self):
+        write(self.vault, "README.md", ALLOWLIST_README)
+        os.makedirs(os.path.join(self.vault, "system"), exist_ok=True)
+        open(os.path.join(self.vault, "system", "lifekit-map.canvas"), "w").write("{}")
+        for n in range(3):
+            write(
+                self.vault,
+                f"domains/p{n}.md",
+                "---\nname: p\nsummary: s\n---\n" "[[system/lifekit-map.canvas|map]]\n",
+            )
+        broken = [
+            f
+            for f in self.lint()
+            if f["rule"] == "broken-link" and "lifekit-map" in f["detail"]
+        ]
+        self.assertEqual([], broken)
 
 
 if __name__ == "__main__":

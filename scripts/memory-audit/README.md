@@ -26,8 +26,16 @@ never edit the workspace copy by hand.
   without touching anything.
 - `vault-lint.py` — structural contract-lint (the checks the memory-wiki plugin
   cannot do: facts-vs-state, project triad, orphans, broken links, deprecated
-  paths, stale STATUS, architecture-canvas drift). Frozen surfaces (evidence
-  auto-fix may not touch) are not re-flagged — no permanent-noise findings.
+  paths, stale STATUS, architecture-canvas drift). Exemptions are IMMUTABLE-only:
+  `sources/` (clipped evidence), `audits/` (generated reports) and the dated
+  per-project `proposals/`/`tasks/`/`runs/` scaffolds — content no fix may touch,
+  so a weekly finding on it has no consumer. **Nothing is exempted for being
+  curated, protected, or merely unowned**: `journal/` was exempt as "verbatim
+  evidence" for three months while holding unowned agent narrative, and the
+  exemption made it invisible to the only scheduled linter. Two guards keep that
+  from recurring — `stale-exemption` (an exempt prefix the README allowlist no
+  longer carries) and an `info`-severity `exemption-census` line naming every
+  exemption and its file count in each weekly report.
   Dependency-free.
 - `gen-report.py` — assembles the dated report (auto-fixed + rotated + residual
   findings).
