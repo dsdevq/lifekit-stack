@@ -311,20 +311,35 @@ for cv in sorted(glob.glob(f"{VAULT}/system/*.canvas")):
         )
 
 # 5) deprecated path forms in FORWARD-LOOKING content
+DATED_LINE = re.compile(r"\d{4}-\d{2}-\d{2}")
 for f in ALL:
     r = rel(f)
     if not r.startswith(("domains/", "system/", "projects/")):
         continue
     if skip_content(f) or os.path.basename(f) in ("log.md", "journal.md"):
         continue
-    body = open(f, encoding="utf-8", errors="replace").read()
-    for m in sorted(set(re.findall(r"(~/\.life/|/srv/life/)", body))):
-        add(
-            "low",
-            "deprecated-path",
-            f,
-            f"references {m} in a forward-looking doc (canonical ~/memory/ | /srv/memory/)",
-        )
+    # Scan per LINE, not per file: a living page may carry dated historical
+    # notes, and the contract keeps legacy paths verbatim inside dated content
+    # ("evidence"). A line bearing an absolute date is a record of what the
+    # path WAS; only an undated line is a forward-looking claim about what it
+    # IS. File-level scanning flagged the former forever with nothing to fix.
+    seen = set()
+    for n, line in enumerate(
+        open(f, encoding="utf-8", errors="replace").read().splitlines(), 1
+    ):
+        if DATED_LINE.search(line):
+            continue
+        for m in sorted(set(re.findall(r"(~/\.life/|/srv/life/)", line))):
+            if (m, n) in seen:
+                continue
+            seen.add((m, n))
+            add(
+                "low",
+                "deprecated-path",
+                f,
+                f"line {n} references {m} in forward-looking text "
+                "(canonical ~/memory/ | /srv/memory/); dated records keep it verbatim",
+            )
 
 # 6) content pages missing frontmatter
 for sub in ("domains", "system", "concepts", "entities", "syntheses"):

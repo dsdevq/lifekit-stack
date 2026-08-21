@@ -26,7 +26,10 @@ never edit the workspace copy by hand.
   without touching anything.
 - `vault-lint.py` — structural contract-lint (the checks the memory-wiki plugin
   cannot do: facts-vs-state, project triad, orphans, broken links, deprecated
-  paths, stale STATUS, architecture-canvas drift). Exemptions are IMMUTABLE-only:
+  paths, stale STATUS, architecture-canvas drift). `deprecated-path` is scanned
+  per LINE and skips lines carrying an absolute date - the contract keeps legacy
+  `~/.life`//`/srv/life` verbatim inside dated records, so only undated text is a
+  forward-looking claim. Exemptions are IMMUTABLE-only:
   `sources/` (clipped evidence), `audits/` (generated reports) and the dated
   per-project `proposals/`/`tasks/`/`runs/` scaffolds — content no fix may touch,
   so a weekly finding on it has no consumer. **Nothing is exempted for being
