@@ -358,6 +358,10 @@ PROPOSAL_TTL_DAYS = 30
 PROP_HEAD = re.compile(r"^### (\d{4}-\d{2}-\d{2})-(\S+)\s*$")
 ROTATABLE_STATUS = re.compile(r"^- \*\*Status:\*\*\s*new\b", re.I)
 STATUS_ANY = re.compile(r"^- \*\*Status:\*\*\s*(.+?)\s*$")
+# Vault README Rule 4: a status that suspends the TTL must name what restarts
+# it. A future resume date makes the suspension legitimate and quiet; no date,
+# or one already passed, means the label is protecting the entry forever.
+RESUME_BY = re.compile(r"regrade by (\d{4}-\d{2}-\d{2})", re.I)
 
 _prop = os.path.join(VAULT, "system", "proposals.md")
 if os.path.exists(_prop):
@@ -397,14 +401,33 @@ if os.path.exists(_prop):
                     ),
                     "(no Status line)",
                 )
-                add(
-                    "medium",
-                    "stale-proposal",
-                    "system/proposals.md",
-                    f"{m.group(1)}-{m.group(2)}: open {age}d with status '{st}' — "
-                    "past the 30d graded-or-die TTL and not mechanically "
-                    "expirable; grade it or move it to the Decisions record",
-                )
+                rm = RESUME_BY.search(st)
+                resume = None
+                if rm:
+                    try:
+                        resume = datetime.date.fromisoformat(rm.group(1))
+                    except ValueError:
+                        resume = None
+                if resume is None:
+                    add(
+                        "medium",
+                        "stale-proposal",
+                        "system/proposals.md",
+                        f"{m.group(1)}-{m.group(2)}: open {age}d with status '{st}' — "
+                        "past the 30d TTL and not mechanically expirable, and the "
+                        "status names no resume condition (README Rule 4: add "
+                        "'- regrade by YYYY-MM-DD', grade it, or move it to the "
+                        "Decisions record)",
+                    )
+                elif resume <= TODAY:
+                    add(
+                        "medium",
+                        "stale-proposal",
+                        "system/proposals.md",
+                        f"{m.group(1)}-{m.group(2)}: its own resume date "
+                        f"{resume.isoformat()} has passed — regrade it now or move "
+                        "it to the Decisions record",
+                    )
             i = end
 
 
