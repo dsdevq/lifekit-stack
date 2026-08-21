@@ -438,5 +438,57 @@ class TestStaleProposalSurfacing(Fixture):
         )
 
 
+class TestRule4ResumeDates(Fixture):
+    """README Rule 4 — a status that suspends the TTL must say what restarts it."""
+
+    def lint(self):
+        return run(LINT, self.vault)
+
+    def ledger(self, status):
+        return (
+            "---\nname: proposals\n---\n\n# P\n\n## Open proposals\n\n"
+            f"### {days_ago(45)}-suspended\n- **Status:** {status}\n"
+            "- **What + why:** x.\n\n"
+            "## Decisions record\n\n- 2026-08-06 prior -> adopted\n"
+        )
+
+    def stale(self):
+        return [f for f in self.lint() if f["rule"] == "stale-proposal"]
+
+    def test_no_resume_condition_is_flagged(self):
+        write(self.vault, "system/proposals.md", self.ledger("accepted in principle"))
+        hits = self.stale()
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn("names no resume condition", hits[0]["detail"])
+
+    def test_future_resume_date_suspends_quietly(self):
+        soon = (TODAY + datetime.timedelta(days=30)).isoformat()
+        write(
+            self.vault,
+            "system/proposals.md",
+            self.ledger(f"accepted in principle - regrade by {soon}"),
+        )
+        self.assertEqual([], self.stale())
+
+    def test_passed_resume_date_is_flagged(self):
+        past = days_ago(2)
+        write(
+            self.vault,
+            "system/proposals.md",
+            self.ledger(f"accepted in principle - regrade by {past}"),
+        )
+        hits = self.stale()
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn(f"resume date {past} has passed", hits[0]["detail"])
+
+    def test_unparseable_resume_date_counts_as_none(self):
+        write(
+            self.vault,
+            "system/proposals.md",
+            self.ledger("accepted in principle - regrade by 2026-13-45"),
+        )
+        self.assertEqual(1, len(self.stale()))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,9 @@ never edit the workspace copy by hand.
   `new` expires mechanically; any OTHER status past the TTL is a judgment call
   and surfaces as a `stale-proposal` lint finding instead — age decides who
   looks, status only decides deletion-vs-nag, so no status string can suspend
-  the deadline silently.
+  the deadline silently. Per the vault README's **Rule 4**, such a status must
+  carry its own resume condition (`- regrade by YYYY-MM-DD`): a future date
+  suspends the finding until then, a missing or passed date does not.
   Deletion happens ONLY inside these classes — git history is the archive.
   Judgment classes (stale STATUS, concluded-project folds) are never rotated
   here; they surface as lint findings. `--dry-run` prints the action JSON
