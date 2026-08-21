@@ -334,5 +334,45 @@ class TestExemptionHygiene(Fixture):
         self.assertEqual([], broken)
 
 
+class TestDeprecatedPathIsLineScoped(Fixture):
+    """Legacy paths inside dated records are evidence; only undated text is a claim."""
+
+    def lint(self):
+        return run(LINT, self.vault)
+
+    def test_undated_line_is_flagged(self):
+        write(
+            self.vault,
+            "system/ops.md",
+            "---\nname: ops\nsummary: s\n---\n\nDeploy from `~/.life/` on the box.\n",
+        )
+        hits = [f for f in self.lint() if f["rule"] == "deprecated-path"]
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn("line 6", hits[0]["detail"])
+
+    def test_dated_record_line_is_evidence_not_a_finding(self):
+        write(
+            self.vault,
+            "system/ops.md",
+            "---\nname: ops\nsummary: s\n---\n\n"
+            "**Note - memory-sync fix (2026-06-20):** the script did "
+            "`cd /srv/life` and failed every 15 min until repathed.\n",
+        )
+        hits = [f for f in self.lint() if f["rule"] == "deprecated-path"]
+        self.assertEqual([], hits, hits)
+
+    def test_dated_and_undated_lines_in_one_page(self):
+        write(
+            self.vault,
+            "system/ops.md",
+            "---\nname: ops\nsummary: s\n---\n\n"
+            "**Swept 2026-06-20:** `~/.life/` -> `~/memory/` across 11 files.\n"
+            "Current deploy path is `/srv/life/compose`.\n",
+        )
+        hits = [f for f in self.lint() if f["rule"] == "deprecated-path"]
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn("line 7", hits[0]["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()
