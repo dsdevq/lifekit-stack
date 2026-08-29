@@ -73,13 +73,9 @@ def probe_health(url: str, *, timeout_s: float = 5.0) -> HealthSnapshot:
     try:
         body = resp.json()
     except Exception:  # noqa: BLE001 — garbage body = unhealthy, typed
-        return HealthSnapshot(
-            reachable=True, ok=False, status_code=200, error="unparseable body"
-        )
+        return HealthSnapshot(reachable=True, ok=False, status_code=200, error="unparseable body")
     if not isinstance(body, dict):
-        return HealthSnapshot(
-            reachable=True, ok=False, status_code=200, error="non-object body"
-        )
+        return HealthSnapshot(reachable=True, ok=False, status_code=200, error="non-object body")
     dispatch_open = body.get("dispatch_open")
     return HealthSnapshot(
         reachable=True,

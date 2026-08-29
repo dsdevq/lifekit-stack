@@ -17,7 +17,7 @@ Pins the four load-bearing behaviors of this tranche:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -76,9 +76,7 @@ async def test_o5_incident_notifies_mechanically_with_zero_cognition(
 ):
     calls = _count_calls(monkeypatch)
     posts: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        main_mod, "_post_text", lambda url, text, **kw: posts.append((url, text))
-    )
+    monkeypatch.setattr(main_mod, "_post_text", lambda url, text, **kw: posts.append((url, text)))
     monkeypatch.setattr(
         main_mod,
         "probe_health",

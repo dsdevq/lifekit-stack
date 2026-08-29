@@ -38,11 +38,11 @@ import json
 import logging
 import signal
 import sys
-
-import httpx
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from . import actions, playbooks
 from .actions import ActionOutcome, outcome_to_dict
@@ -629,11 +629,7 @@ async def tick(
         else:
             incidents = detector.scan(cfg.goals_dir, now=now)
         for incident in incidents:
-            if (
-                incident.trigger == "O3"
-                and health is not None
-                and health.dispatch_open is False
-            ):
+            if incident.trigger == "O3" and health is not None and health.dispatch_open is False:
                 _log.info(
                     "O3 suppressed goal=%s — dispatch deliberately held (%s); "
                     "held is not stalled",
@@ -655,9 +651,7 @@ async def tick(
                 try:
                     await _notify_o5(incident, folder, cfg)
                 except Exception:  # defensive — same containment as cognition
-                    _log.exception(
-                        "O5 notify path crashed folder=%s — continuing", folder
-                    )
+                    _log.exception("O5 notify path crashed folder=%s — continuing", folder)
                 continue
             try:
                 await _process_incident(incident, folder, cfg.incidents_dir / "log.md", mcp, cfg)

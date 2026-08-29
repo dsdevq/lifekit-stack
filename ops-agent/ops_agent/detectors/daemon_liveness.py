@@ -53,7 +53,9 @@ class DaemonLivenessDetector:
         self._renotify_s = max(renotify_s, 60.0)
         self._cycle_report_max_age_h = cycle_report_max_age_h
 
-    def _incident(self, condition: str, detail: str, *, now: datetime, extra: dict[str, Any] | None = None) -> Incident:
+    def _incident(
+        self, condition: str, detail: str, *, now: datetime, extra: dict[str, Any] | None = None
+    ) -> Incident:
         bucket = int(now.timestamp() // self._renotify_s)
         payload: dict[str, Any] = {
             "condition": condition,
