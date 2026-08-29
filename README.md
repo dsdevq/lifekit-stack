@@ -46,7 +46,7 @@ Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded lo
 Per-container resource and process telemetry is collected by **[Netdata](https://www.netdata.cloud/)** installed on the host (not in a container). It is the canonical monitoring layer for this stack.
 
 - **Dashboard:** `http://<tailnet-ip>:19999` — bound to the tailnet interface only, no public ingress.
-- **Alerts:** delivered to Telegram chat `422369750`.
+- **Alerts:** delivered to Telegram chat `123456789`.
 
 If you want app-level logs, `docker compose logs <service>` is still the path — Netdata only watches the host + container resource envelopes.
 
@@ -195,7 +195,7 @@ The exact combination this stack is tested against. Every component below is a s
 - **Host:** [Hetzner](https://www.hetzner.com/cloud) CX22 (2 vCPU / 4GB RAM, ≈€4/mo, EU), Ubuntu 24.04. Any other Debian-family VPS with comparable specs should work; the only setup that gets active issue-tracking is this one.
 - **Mesh VPN:** [Tailscale](https://tailscale.com/) with an [unattended-join auth key](https://login.tailscale.com/admin/settings/keys). The host's UFW closes all public ports except ICMP; admin access (SSH, SSHFS) goes through the mesh.
 - **Chat transport:** Telegram long-polling — the gateway dials out to Telegram, no inbound webhook needed. Create a bot via [@BotFather](https://t.me/BotFather) (grab the token), then DM [@userinfobot](https://t.me/userinfobot) to get your own numeric user ID (this becomes the owner allowlist).
-- **Monitoring:** [Netdata](https://www.netdata.cloud/) on the host (not containerized). Tailnet-only dashboard at `http://<tailnet-ip>:19999`; alerts to Telegram chat `422369750`.
+- **Monitoring:** [Netdata](https://www.netdata.cloud/) on the host (not containerized). Tailnet-only dashboard at `http://<tailnet-ip>:19999`; alerts to Telegram chat `123456789`.
 - **Local LLM:** Anthropic Haiku on the same VPS (CPU-only, no GPU required).
 
 Swap any of these by writing a new adapter against the corresponding port — the rest of the stack doesn't know or care.
