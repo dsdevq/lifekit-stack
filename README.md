@@ -120,9 +120,9 @@ lifekit-stack/
 ├── compose/              # docker-compose.yml, Dockerfiles, OpenClaw sources
 ├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
-├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills
-├── .github/workflows/    # CI: lint, template tests, semver releases — runs on the VPS self-hosted runner
-└── PRIVATE.md            # audit checklist — what NEVER belongs in this repo
+├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills, PRIVATE.md (the never-commit audit checklist)
+├── ops-agent/            # resident ops watcher for devclaw — built here, run by devclaw's compose (spec 005)
+└── .github/workflows/    # CI (pre-commit lint, gitleaks full-history, tests, deploy — VPS self-hosted runner), doc-drift, release-please + weekly release
 ```
 
 ## VPS users
@@ -156,7 +156,7 @@ The wizard saves your choices to `wizard.yaml` on first run, so re-runs are non-
 
 ## What's NOT in this repo
 
-This repository contains **only code, config templates, and deploy logic**. Personal data and secrets stay out by design — see [`PRIVATE.md`](./PRIVATE.md) for the full audit checklist. Briefly:
+This repository contains **only code, config templates, and deploy logic**. Personal data and secrets stay out by design — see [`docs/PRIVATE.md`](./docs/PRIVATE.md) for the full audit checklist. Briefly:
 
 - **Your `~/.life/` data** — your journal, domains, knowledge layer. Lives on your VPS. Optionally back it up to your own private git repo, never this one.
 - **Secrets** — bot tokens, API keys, encryption keys. Generated locally by the wizard, never committed.
@@ -174,7 +174,7 @@ See [`docs/architecture.md`](./docs/architecture.md) for adapter choices, port c
 
 ## Contributing
 
-Issues and PRs welcome. See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+Issues and PRs welcome. See [`CONTRIBUTING.md`](./.github/CONTRIBUTING.md).
 
 Setups outside the [Reference deployment](#reference-deployment) are not officially supported in v0.x — pull requests adding adapters (new chat transports, new mesh VPNs, new hosts) are very welcome, but we won't promise responsiveness on issues for setups outside the supported path.
 

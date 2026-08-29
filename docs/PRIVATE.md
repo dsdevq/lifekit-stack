@@ -40,7 +40,7 @@ Everything personal lives in the user-context YAML the wizard generates locally.
 
 ## What IS allowed in this repo
 
-- ✅ Maintainer's name + email in `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`.
+- ✅ Maintainer's name + email in `LICENSE` and `.github/CONTRIBUTING.md`.
 - ✅ Example/placeholder values (`example.com`, `your-bot-name`, `123456789`).
 - ✅ Documentation that references the structure of a domain file but not its contents.
 - ✅ Skill prompts written for the general case, with `{{ user.* }}` substitutions for any user-specific values.
