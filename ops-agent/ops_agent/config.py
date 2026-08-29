@@ -61,6 +61,27 @@ class OpsConfig:
     # ``OPS_AGENT_DEVCLAW_REPO_PATH``. None disables L3 in practice even
     # if ``l3_enabled=True`` (the action returns typed-failed).
     devclaw_repo_path: Path | None = None
+    # O5 (daemon-liveness dead-man, observability-maxout P1) — devclaw's
+    # token-free /health URL. Empty string disables the probe AND O5 (the
+    # detector sees ``None`` and no-ops), so a workstation run without a
+    # devclaw doesn't false-alarm.
+    health_url: str = ""
+    # Bound on the /health GET so a wedged devclaw can't stall the tick.
+    health_timeout_s: float = 5.0
+    # heartbeat-stale threshold = factor × the tick interval /health reports.
+    # 3 → a 15-min heartbeat may miss two passes before O5 calls it stale.
+    heartbeat_stale_factor: float = 3.0
+    # A persisting O5 condition re-pings once per this bucket (the dedup
+    # fingerprint embeds ⌊now/renotify⌋) instead of once per 24h dedup window.
+    o5_renotify_s: float = 4 * 3600.0
+    # cycle-report dead-man: alarm when the last cycle report is older than
+    # this many hours. 0 = OFF (default) — a schedule-less install never
+    # emits reports and must not false-alarm. Arm at ~26 for a nightly window.
+    o5_cycle_report_max_age_h: float = 0.0
+    # Mechanical owner-notify endpoint (the same notify-relay devclaw uses,
+    # plain-text passthrough). Empty → O5 findings are log + incident-folder
+    # only. Ping-only by decision (Resolved O1) — no restart action wired.
+    notify_url: str = ""
 
 
 def _env_path(name: str, default: str) -> Path:
@@ -154,6 +175,19 @@ def load_config() -> OpsConfig:
                                            source repo on the host; becomes
                                            workspace_dir on the fix_bug MCP
                                            call. Unset → L3 short-circuits.
+      OPS_AGENT_DEVCLAW_HEALTH_URL       — devclaw's token-free /health URL;
+                                           enables the O5 dead-man detector
+                                           + the O3 held≠stalled suppression
+                                           (unset → both no-op)
+      OPS_AGENT_HEALTH_TIMEOUT_S         — bound on the /health GET (def 5)
+      OPS_AGENT_HEARTBEAT_STALE_FACTOR   — stale = factor × tick interval (def 3)
+      OPS_AGENT_O5_RENOTIFY_S            — re-ping cadence for a persisting
+                                           O5 condition (def 4h)
+      OPS_AGENT_O5_CYCLE_REPORT_MAX_AGE_H— cycle-report dead-man threshold in
+                                           hours; 0 = off (default)
+      OPS_AGENT_NOTIFY_URL               — plain-text notify-relay endpoint
+                                           for O5's mechanical owner ping
+                                           (unset → log + incident-folder only)
     """
     return OpsConfig(
         goals_dir=_env_path("OPS_AGENT_GOALS_DIR", "~/memory/goals"),
@@ -169,4 +203,10 @@ def load_config() -> OpsConfig:
         trend_repeat_threshold=_env_int("OPS_AGENT_TREND_REPEAT_THRESHOLD", 3),
         l3_enabled=_env_bool("OPS_AGENT_L3_ENABLED", False),
         devclaw_repo_path=_env_optional_path("OPS_AGENT_DEVCLAW_REPO_PATH"),
+        health_url=os.environ.get("OPS_AGENT_DEVCLAW_HEALTH_URL", "").strip(),
+        health_timeout_s=_env_float("OPS_AGENT_HEALTH_TIMEOUT_S", 5.0),
+        heartbeat_stale_factor=_env_float("OPS_AGENT_HEARTBEAT_STALE_FACTOR", 3.0),
+        o5_renotify_s=_env_float("OPS_AGENT_O5_RENOTIFY_S", 4 * 3600.0),
+        o5_cycle_report_max_age_h=_env_float("OPS_AGENT_O5_CYCLE_REPORT_MAX_AGE_H", 0.0),
+        notify_url=os.environ.get("OPS_AGENT_NOTIFY_URL", "").strip(),
     )
