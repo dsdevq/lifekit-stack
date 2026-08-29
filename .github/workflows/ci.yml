@@ -25,6 +25,21 @@ jobs:
           "$RUNNER_TEMP/pcvenv/bin/pip" install --quiet --upgrade pip pre-commit
           "$RUNNER_TEMP/pcvenv/bin/pre-commit" run --all-files --show-diff-on-failure --color=always
 
+  tests:
+    name: Tests (ops-agent + memory-audit)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same throwaway-venv pattern as the lint job (setup-python can't provision
+      # on this arm64 self-hosted runner; system python3 + venv are bootstrapped).
+      - name: Run pytest
+        run: |
+          python3 -m venv "$RUNNER_TEMP/testvenv"
+          "$RUNNER_TEMP/testvenv/bin/pip" install --quiet --upgrade pip
+          "$RUNNER_TEMP/testvenv/bin/pip" install --quiet -e "./ops-agent[dev]"
+          "$RUNNER_TEMP/testvenv/bin/python" -m pytest -q ops-agent/tests scripts/memory-audit/tests
+
   gitleaks-full:
     name: Gitleaks full-history scan
     runs-on: self-hosted
@@ -55,7 +70,7 @@ jobs:
 
   deploy:
     name: Deploy to VPS
-    needs: [lint, gitleaks-full]
+    needs: [lint, tests, gitleaks-full]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     concurrency:
