@@ -6,7 +6,7 @@
 #
 # Usage on the VPS as root (after SSHing in fresh):
 #
-#   curl -fsSL https://raw.githubusercontent.com/dsdevq/lifekit-stack/main/scripts/bootstrap-vps.sh | \
+#   curl -fsSL https://raw.githubusercontent.com/lifekit-hq/lifekit-stack/main/scripts/bootstrap-vps.sh | \
 #     sudo TAILSCALE_AUTH_KEY=tskey-auth-... TAILSCALE_HOSTNAME=lifekit-vps bash
 #
 # Or clone the repo first and run:
@@ -14,7 +14,7 @@
 #
 # Optional: set RUNNER_REG_TOKEN to also install the GitHub Actions
 # self-hosted runner. Fetch a fresh 1-hour token with:
-#   gh api -X POST /repos/dsdevq/lifekit-stack/actions/runners/registration-token --jq .token
+#   gh api -X POST /repos/lifekit-hq/lifekit-stack/actions/runners/registration-token --jq .token
 #
 # After this script: scp your .env to /srv/openclaw/config/.env, then run ./scripts/deploy.sh.
 
@@ -27,7 +27,7 @@ set -euo pipefail
 
 LIFEKIT_USER="${LIFEKIT_USER:-lifekit}"
 LIFEKIT_UID="${LIFEKIT_UID:-1000}"
-REPO_URL="${REPO_URL:-https://github.com/dsdevq/lifekit-stack.git}"
+REPO_URL="${REPO_URL:-https://github.com/lifekit-hq/lifekit-stack.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/srv/lifekit-stack}"
 
@@ -149,17 +149,12 @@ else
   sudo -u "$LIFEKIT_USER" git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
 
-# ─── Auto-redeploy timer for lifekit-dashboard ────────────────────────────────
-
-say "Installing lifekit-dashboard auto-redeploy script + systemd units"
-install -m 755 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.sh" \
-  /usr/local/bin/lifekit-dashboard-redeploy.sh
-install -m 644 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.service" \
-  /etc/systemd/system/lifekit-dashboard-redeploy.service
-install -m 644 "$REPO_DIR/scripts/redeploy/lifekit-dashboard-redeploy.timer" \
-  /etc/systemd/system/lifekit-dashboard-redeploy.timer
-systemctl daemon-reload
-systemctl enable --now lifekit-dashboard-redeploy.timer
+# (The lifekit-dashboard auto-redeploy timer was retired 2026-08-16 — the
+# dashboard deploys from its own repo's workflow now; ecosystem decoupling
+# slice 2. Removal from an already-bootstrapped host:
+#   systemctl disable --now lifekit-dashboard-redeploy.timer
+#   rm -f /etc/systemd/system/lifekit-dashboard-redeploy.{timer,service} \
+#         /usr/local/bin/lifekit-dashboard-redeploy.sh && systemctl daemon-reload)
 
 # ─── openclaw-config sync timer ───────────────────────────────────────────────
 

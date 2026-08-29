@@ -238,7 +238,7 @@ Neither system is coupled to the other's internals. DevClaw is a black box from 
 
 OpenClaw skills are synchronous — Kit calls the CLI, gets a result, returns within the chat turn. DevClaw's execution model is different: a goal can run for hours, survive container restarts, and report back asynchronously. That lifecycle doesn't fit inside a Kit session.
 
-See [DevClaw architecture v2](https://github.com/dsdevq/devclaw/blob/main/docs/architecture-v2.md) for the full design.
+See [DevClaw architecture v2](https://github.com/lifekit-hq/devclaw/blob/main/docs/architecture-v2.md) for the full design.
 
 ---
 
@@ -264,5 +264,5 @@ The boundary rule we wrote into this doc earlier — agentToAgent for in-process
 - [OpenClaw skills](https://docs.openclaw.ai/tools/skills) — workspace skill discovery + install
 - [OpenClaw system prompt](https://docs.openclaw.ai/concepts/system-prompt) — bootstrap file injection
 - [OpenClaw agent runtime](https://docs.openclaw.ai/concepts/agent) — workspace contract + session bootstrap
-- [DevClaw architecture v2](https://github.com/dsdevq/devclaw/blob/main/docs/architecture-v2.md) — DevClaw + OpenHands design
+- [DevClaw architecture v2](https://github.com/lifekit-hq/devclaw/blob/main/docs/architecture-v2.md) — DevClaw + OpenHands design
 - Memory: `architecture-openclaw-modular-monolith`, `openhands-execution-engine`, `feedback-boundary-rule-mcp-vs-a2a`

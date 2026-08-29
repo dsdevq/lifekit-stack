@@ -3,9 +3,13 @@
 the memory-wiki plugin cannot do. Read-only; emits JSON findings to stdout.
 Dependency-free (no PyYAML) so it runs host- or container-side.
 
-Honors the README contract: sources/journal/audits/incidents/goal-archive and
-dated proposals/tasks/runs are FROZEN (verbatim historical evidence); recon/
-conversation/findings/etc. are OPTIONAL artifacts not part of the contract.
+Exemptions are IMMUTABLE-only: sources/ (clipped evidence) and audits/
+(generated reports), plus the dated per-project scaffolds proposals/tasks/runs.
+Those are content no fix may touch, so a finding on them has no consumer.
+Nothing is exempted merely for being unowned — unowned is the thing to surface.
+Every exemption is validated against the README structure allowlist and its size
+is reported weekly, so one cannot go unnoticed. recon/conversation/findings/etc.
+are OPTIONAL artifacts not part of the contract.
 """
 
 import os
@@ -13,8 +17,11 @@ import re
 import sys
 import json
 import glob
+import datetime
+import subprocess
 
 VAULT = sys.argv[1] if len(sys.argv) > 1 else "/srv/memory"
+TODAY = datetime.date.today()
 findings = []
 
 
@@ -46,8 +53,17 @@ def rel(f):
     return os.path.relpath(f, VAULT)
 
 
-FROZEN_PREFIX = ("sources/", "journal/", "audits/", "incidents/", "goal-archive/")
-FROZEN_SEG = ("/proposals/", "/proposals-approved/", "/tasks/", "/runs/")
+# IMMUTABLE = content no fix may touch, so weekly findings on it have no
+# consumer. This list is deliberately short. A path does NOT belong here for
+# being curated, protected, or merely unowned: `journal/` sat in this tuple for
+# three months as "verbatim evidence" while actually holding unowned agent
+# narrative, and the exemption made it invisible to the only scheduled linter.
+# Removed 2026-08-21 along with `incidents/` and `goal-archive/`, which named
+# directories the vault does not have.
+IMMUTABLE_PREFIX = ("sources/", "audits/")
+# Dated per-project scaffolds — contract-optional dirs (projects/INDEX.md), so
+# they may legitimately be absent from disk without the rule being stale.
+IMMUTABLE_SEG = ("/proposals/", "/tasks/", "/runs/")
 OPT_BASENAMES = {
     "recon.md",
     "conversation.md",
@@ -69,7 +85,9 @@ ROOT_RUNTIME = {"inbox.md", "log.md"}
 
 def is_frozen(f):
     r = rel(f)
-    return r.startswith(FROZEN_PREFIX) or any(seg in "/" + r for seg in FROZEN_SEG)
+    return r.startswith(IMMUTABLE_PREFIX) or any(
+        seg in "/" + r for seg in IMMUTABLE_SEG
+    )
 
 
 def is_optional(f):
@@ -78,6 +96,57 @@ def is_optional(f):
 
 def skip_content(f):
     return is_frozen(f) or is_optional(f) or os.path.basename(f) in INDEXISH
+
+
+def read_allowlist():
+    """Top-level entries from the README ```vault-structure block (the freeze)."""
+    try:
+        txt = open(os.path.join(VAULT, "README.md"), encoding="utf-8").read()
+    except OSError:
+        return None
+    m = re.search(r"```vault-structure\n(.*?)```", txt, re.S)
+    if not m:
+        return None
+    return {
+        ln.strip().rstrip("/")
+        for ln in m.group(1).splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    }
+
+
+# 0) exemption hygiene — an exemption must name a path the contract still
+# recognizes, and must state its own size every week. An exemption nobody can
+# see is how `journal/` went three months without a single finding.
+_allow = read_allowlist()
+if _allow is not None:
+    for pref in IMMUTABLE_PREFIX:
+        if pref.rstrip("/") not in _allow:
+            add(
+                "medium",
+                "stale-exemption",
+                pref,
+                f"'{pref}' is exempt from lint but is not in the README structure "
+                "allowlist — drop the exemption with the directory",
+            )
+
+_exempt = [f for f in ALL if is_frozen(f)]
+if _exempt:
+    _by = {}
+    for f in _exempt:
+        r = rel(f)
+        key = next(
+            (p for p in IMMUTABLE_PREFIX if r.startswith(p)),
+            next((s2.strip("/") + "/" for s2 in IMMUTABLE_SEG if s2 in "/" + r), "?"),
+        )
+        _by[key] = _by.get(key, 0) + 1
+    add(
+        "info",
+        "exemption-census",
+        ".",
+        "lint exemptions this run: "
+        + ", ".join(f"{k} {v} file(s)" for k, v in sorted(_by.items()))
+        + " — immutable content only; anything else must be linted",
+    )
 
 
 # dependency-free YAML sanity: a top-level "key: value" whose unquoted value
@@ -126,6 +195,10 @@ for f in ALL:
             f,
             "uses last_updated: — rename to updatedAt:",
         )
+    # Frozen surfaces are verbatim evidence: auto-fix is forbidden to touch them,
+    # so flagging them weekly is permanent noise with no possible consumer.
+    if is_frozen(f):
+        continue
     offenders = yaml_offenders(head)
     if offenders:
         add(
@@ -150,21 +223,213 @@ for f in glob.glob(f"{VAULT}/projects/*/STATUS.md"):
             "STATUS.md uses updated: — align to updatedAt:",
         )
 
+# 4b) stale STATUS.md — active but untouched past the 14d rotation trigger
+UPDATED_AT = re.compile(r"^updatedAt:\s*[\"']?(\d{4}-\d{2}-\d{2})", re.M)
+STATUS_FIELD = re.compile(r"^status:\s*[\"']?(\S+)", re.M)
+
+
+def fm_date(head):
+    m = UPDATED_AT.search(head or "")
+    if not m:
+        return None
+    try:
+        return datetime.date.fromisoformat(m.group(1))
+    except ValueError:
+        return None
+
+
+for f in glob.glob(f"{VAULT}/projects/*/STATUS.md"):
+    head, _ = fm(f)
+    st = STATUS_FIELD.search(head or "")
+    if st and st.group(1) in ("archived", "concluded"):
+        continue
+    d = fm_date(head)
+    if d and (TODAY - d).days > 14:
+        add(
+            "medium",
+            "stale-status",
+            f,
+            f"active STATUS.md untouched for {(TODAY - d).days}d (>14d rotation "
+            "trigger) — refresh it or conclude the project into plan.md",
+        )
+
+
+# 4c) canvas drift — an architecture canvas older than the pages it depicts
+def canvas_date(f):
+    try:
+        out = subprocess.run(
+            ["git", "-C", VAULT, "log", "-1", "--format=%cs", "--", rel(f)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout.strip()
+        if out:
+            return datetime.date.fromisoformat(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return datetime.date.fromtimestamp(os.path.getmtime(f))
+
+
+def sibling_page_date(dirpath):
+    dates = []
+    for name in ("plan.md", "architecture.md"):
+        p = os.path.join(dirpath, name)
+        if os.path.exists(p):
+            d = fm_date(fm(p)[0])
+            if d:
+                dates.append(d)
+    return max(dates) if dates else None
+
+
+for cv in sorted(glob.glob(f"{VAULT}/projects/*/*.canvas")):
+    pages = sibling_page_date(os.path.dirname(cv))
+    cvd = canvas_date(cv)
+    if pages and (pages - cvd).days > 14:
+        add(
+            "medium",
+            "canvas-drift",
+            cv,
+            f"project pages moved {(pages - cvd).days}d past this canvas — "
+            "re-verify the diagram against plan.md/architecture.md",
+        )
+for cv in sorted(glob.glob(f"{VAULT}/system/*.canvas")):
+    newest = [
+        d
+        for p in sorted(glob.glob(f"{VAULT}/projects/*"))
+        if glob.glob(f"{p}/*.canvas")
+        for d in [sibling_page_date(p)]
+        if d
+    ]
+    cvd = canvas_date(cv)
+    if newest and (max(newest) - cvd).days > 14:
+        add(
+            "medium",
+            "canvas-drift",
+            cv,
+            f"project pages moved {(max(newest) - cvd).days}d past this map — "
+            "re-verify the overview canvas",
+        )
+
 # 5) deprecated path forms in FORWARD-LOOKING content
+DATED_LINE = re.compile(r"\d{4}-\d{2}-\d{2}")
 for f in ALL:
     r = rel(f)
     if not r.startswith(("domains/", "system/", "projects/")):
         continue
     if skip_content(f) or os.path.basename(f) in ("log.md", "journal.md"):
         continue
-    body = open(f, encoding="utf-8", errors="replace").read()
-    for m in sorted(set(re.findall(r"(~/\.life/|/srv/life/)", body))):
-        add(
-            "low",
-            "deprecated-path",
-            f,
-            f"references {m} in a forward-looking doc (canonical ~/memory/ | /srv/memory/)",
-        )
+    # Scan per LINE, not per file: a living page may carry dated historical
+    # notes, and the contract keeps legacy paths verbatim inside dated content
+    # ("evidence"). A line bearing an absolute date is a record of what the
+    # path WAS; only an undated line is a forward-looking claim about what it
+    # IS. File-level scanning flagged the former forever with nothing to fix.
+    seen = set()
+    for n, line in enumerate(
+        open(f, encoding="utf-8", errors="replace").read().splitlines(), 1
+    ):
+        if DATED_LINE.search(line):
+            continue
+        for m in sorted(set(re.findall(r"(~/\.life/|/srv/life/)", line))):
+            if (m, n) in seen:
+                continue
+            seen.add((m, n))
+            add(
+                "low",
+                "deprecated-path",
+                f,
+                f"line {n} references {m} in forward-looking text "
+                "(canonical ~/memory/ | /srv/memory/); dated records keep it verbatim",
+            )
+
+# 5b) open proposals past the graded-or-die TTL that rotation will NOT expire.
+# vault-rotate.py mechanically expires exactly one status — `new`, meaning
+# "never looked at". Everything else past the TTL is a judgment call and
+# surfaces HERE instead of being deleted: auto-deleting a proposal that is
+# actively `evaluating`, or one accepted in principle, is hostile, and
+# vault-rotate's own contract keeps judgment classes out of deletion.
+#
+# The point is that the two are exhaustive between them. Before 2026-08-21 a
+# status could suspend the deadline outright: `accepted in principle (...);
+# execution decisions still ungraded` sat 33 days invisible to rotation AND to
+# the report, because the deadline keyed on a status string rather than on age.
+# Now age decides who looks, and status only decides whether the answer is
+# deletion or a nag.
+PROPOSAL_TTL_DAYS = 30
+PROP_HEAD = re.compile(r"^### (\d{4}-\d{2}-\d{2})-(\S+)\s*$")
+ROTATABLE_STATUS = re.compile(r"^- \*\*Status:\*\*\s*new\b", re.I)
+STATUS_ANY = re.compile(r"^- \*\*Status:\*\*\s*(.+?)\s*$")
+# Vault README Rule 4: a status that suspends the TTL must name what restarts
+# it. A future resume date makes the suspension legitimate and quiet; no date,
+# or one already passed, means the label is protecting the entry forever.
+RESUME_BY = re.compile(r"regrade by (\d{4}-\d{2}-\d{2})", re.I)
+
+_prop = os.path.join(VAULT, "system", "proposals.md")
+if os.path.exists(_prop):
+    _lines = open(_prop, encoding="utf-8", errors="replace").read().split("\n")
+    _open_i = next(
+        (i for i, ln in enumerate(_lines) if ln.startswith("## Open proposals")), None
+    )
+    _dec_i = next(
+        (i for i, ln in enumerate(_lines) if ln.startswith("## Decisions record")),
+        len(_lines),
+    )
+    if _open_i is not None:
+        i = _open_i
+        while i < _dec_i:
+            m = PROP_HEAD.match(_lines[i])
+            if not m:
+                i += 1
+                continue
+            end = i + 1
+            while end < _dec_i and not _lines[end].startswith(("### ", "## ")):
+                end += 1
+            try:
+                age = (TODAY - datetime.date.fromisoformat(m.group(1))).days
+            except ValueError:
+                age = None
+            body = _lines[i:end]
+            if (
+                age is not None
+                and age > PROPOSAL_TTL_DAYS
+                and not any(ROTATABLE_STATUS.match(ln) for ln in body)
+            ):
+                st = next(
+                    (
+                        sm.group(1)
+                        for ln in body
+                        if (sm := STATUS_ANY.match(ln)) is not None
+                    ),
+                    "(no Status line)",
+                )
+                rm = RESUME_BY.search(st)
+                resume = None
+                if rm:
+                    try:
+                        resume = datetime.date.fromisoformat(rm.group(1))
+                    except ValueError:
+                        resume = None
+                if resume is None:
+                    add(
+                        "medium",
+                        "stale-proposal",
+                        "system/proposals.md",
+                        f"{m.group(1)}-{m.group(2)}: open {age}d with status '{st}' — "
+                        "past the 30d TTL and not mechanically expirable, and the "
+                        "status names no resume condition (README Rule 4: add "
+                        "'- regrade by YYYY-MM-DD', grade it, or move it to the "
+                        "Decisions record)",
+                    )
+                elif resume <= TODAY:
+                    add(
+                        "medium",
+                        "stale-proposal",
+                        "system/proposals.md",
+                        f"{m.group(1)}-{m.group(2)}: its own resume date "
+                        f"{resume.isoformat()} has passed — regrade it now or move "
+                        "it to the Decisions record",
+                    )
+            i = end
+
 
 # 6) content pages missing frontmatter
 for sub in ("domains", "system", "concepts", "entities", "syntheses"):
@@ -192,6 +457,14 @@ for f in (
 pages = {}
 for f in ALL:
     pages.setdefault(os.path.splitext(os.path.basename(f))[0], f)
+# Canvases and Bases views are legitimate wikilink targets but are not pages:
+# they resolve links without being orphan-checked themselves. Without this a
+# live [[system/lifekit-map.canvas]] counts as a broken link every week.
+NON_PAGE_TARGETS = {
+    os.path.splitext(os.path.basename(f))[0]
+    for ext in ("canvas", "base")
+    for f in glob.glob(f"{VAULT}/**/*.{ext}", recursive=True)
+}
 inbound = {n: 0 for n in pages}
 broken = {}
 linkre = re.compile(r"\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]")
@@ -203,6 +476,8 @@ for f in ALL:
         base = os.path.splitext(os.path.basename(tgt.strip()))[0]
         if base in inbound:
             inbound[base] += 1
+        elif base in NON_PAGE_TARGETS:
+            continue  # live canvas/base target
         elif base != self_base:
             broken[base] = broken.get(base, 0) + 1
 

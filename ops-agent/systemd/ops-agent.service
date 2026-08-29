@@ -8,7 +8,7 @@
 #
 # See ops-agent/README.md for the full deploy story.
 Description=ops-agent — devclaw incident detector (ops-PR1 baseline)
-Documentation=https://github.com/dsdevq/lifekit-stack/tree/main/ops-agent
+Documentation=https://github.com/lifekit-hq/lifekit-stack/tree/main/ops-agent
 After=network-online.target
 Wants=network-online.target
 

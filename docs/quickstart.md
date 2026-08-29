@@ -31,7 +31,7 @@ lifekit --version    # should print 0.1.0 or newer
 ## Step 2 — Clone the template
 
 ```bash
-git clone https://github.com/dsdevq/lifekit-stack.git
+git clone https://github.com/lifekit-hq/lifekit-stack.git
 cd lifekit-stack
 ```
 
@@ -94,8 +94,8 @@ See [`docs/runbook.md`](./runbook.md) for common issues — failed mesh-VPN join
 
 ## Getting help
 
-- [GitHub Issues](https://github.com/dsdevq/lifekit-stack/issues) — bugs and feature requests.
-- [GitHub Discussions](https://github.com/dsdevq/lifekit-stack/discussions) — questions and ideas.
+- [GitHub Issues](https://github.com/lifekit-hq/lifekit-stack/issues) — bugs and feature requests.
+- [GitHub Discussions](https://github.com/lifekit-hq/lifekit-stack/discussions) — questions and ideas.
 - [OpenClaw docs](https://docs.openclaw.ai/) — for runtime-specific questions.
 
 ## Reference walkthrough

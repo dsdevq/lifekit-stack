@@ -62,6 +62,21 @@ STACK_DEFAULT="${STACK_DEFAULT:-main}"
 git fetch -q origin "${STACK_DEFAULT}"
 git reset -q --hard "origin/${STACK_DEFAULT}"
 
+# ─── memory-audit: sync cron assets to the gateway workspace ─────────────────
+#
+# The weekly `memory_vault_audit` cron runs INSIDE the gateway container from
+# the workspace mount — it cannot see this repo. Without this sync the cron
+# keeps executing whatever was last hand-copied (found 2026-08-16: the box ran
+# 2-month-stale scripts). Placed BEFORE the compose step on purpose so script
+# drift heals even on a deploy that fails later.
+# NOTE (ecosystem decoupling): when the OpenClaw entity gets its own deploy
+# script, this block migrates there — the audit cron is an OpenClaw cron.
+
+say "memory-audit sync (repo -> gateway workspace)"
+AUDIT_DST="${OPENCLAW_WORKSPACE_DIR:-/srv/openclaw/workspace}/memory-audit"
+mkdir -p "${AUDIT_DST}"
+rsync -a --delete --exclude tests/ "${REPO_DIR}/scripts/memory-audit/" "${AUDIT_DST}/"
+
 # ─── OpenClaw onboard (first deploy only) ────────────────────────────────────
 #
 # A fresh host has no /srv/openclaw/config/openclaw.json — without it the
@@ -93,34 +108,11 @@ if [[ ! -f "${OPENCLAW_CONFIG_DIR}/openclaw.json" ]]; then
         --gateway-port 18789
 fi
 
-# ─── lifekit-dashboard: VPS-local clone ──────────────────────────────────────
+# ─── lifekit-dashboard: deployed from its own repo now (decoupling slice 2) ──
 #
-# The dashboard image is built from a VPS-local clone of dsdevq/lifekit-dashboard
-# (not vendored into this repo). gh CLI must be authed on the host as the
-# lifekit user so the private-repo clone works.
-
-DASHBOARD_DIR="${LIFEKIT_DASHBOARD_DIR:-/srv/lifekit-dashboard}"
-say "lifekit-dashboard: sync ${DASHBOARD_DIR}"
-# The token is baked into the remote URL as x-access-token because this runs
-# from a non-interactive `sudo -u lifekit -H bash -lc "..."` subshell where gh's
-# git-credential-helper cannot prompt. Idempotent: re-running resets the URL to
-# the same value.
-TOKEN="$(gh auth token)"
-if [ ! -d "${DASHBOARD_DIR}/.git" ]; then
-  gh repo clone dsdevq/lifekit-dashboard "${DASHBOARD_DIR}"
-fi
-git -C "${DASHBOARD_DIR}" remote set-url origin \
-  "https://x-access-token:${TOKEN}@github.com/dsdevq/lifekit-dashboard.git"
-# fetch + hard-reset, SAME rationale as the stack self-update above: a bare
-# `git pull --ff-only` aborts when the VPS clone has diverged or its local
-# branch config tracks more than one upstream — the exact "fatal: Cannot
-# fast-forward to multiple branches" that failed the deploy on 2026-07-22 and
-# then blocked EVERY subsequent deploy. Resetting to the resolved default
-# branch is race-proof and branch-agnostic, and self-heals the drifted state.
-DASH_DEFAULT="$(git -C "${DASHBOARD_DIR}" remote show origin | sed -n 's/.*HEAD branch: //p' | head -1)"
-DASH_DEFAULT="${DASH_DEFAULT:-main}"
-git -C "${DASHBOARD_DIR}" fetch -q origin "${DASH_DEFAULT}"
-git -C "${DASHBOARD_DIR}" reset -q --hard "origin/${DASH_DEFAULT}"
+# The dashboard deploys from lifekit-hq/lifekit-dashboard's own deploy/
+# (ghcr image + `dashboard` compose project + workflow_dispatch). This stack
+# no longer clones or builds it, and the 5-minute redeploy timer is retired.
 
 # ─── modules.yaml → /srv/memory/system/ ───────────────────────────────────────
 
@@ -142,58 +134,24 @@ if [ ! -d "${STATE_DIR}" ]; then
     "${STATE_DIR}/.curator-proposed"
 fi
 
-# ─── Log the resolved devclaw SHA ───────────────────────────────────────────
+# ─── devclaw: deployed from its own repo now (devclaw spec 005) ─────────────
 #
-# The devclaw-mcp + devclaw-sandbox Dockerfiles take DEVCLAW_REF and feed
-# it straight to `git clone --branch`, which only accepts a branch or tag
-# name (not a SHA). So we keep DEVCLAW_REF as a ref and only print the
-# resolved SHA — useful for the deploy log and the md5-mismatch error
-# message at the end.
-DEVCLAW_REF_INPUT="${DEVCLAW_REF:-main}"
-say "resolving devclaw ref ${DEVCLAW_REF_INPUT} → SHA (for logging)"
-DEVCLAW_SHA="$(git ls-remote https://github.com/dsdevq/devclaw.git \
-  "refs/heads/${DEVCLAW_REF_INPUT}" "refs/tags/${DEVCLAW_REF_INPUT}" \
-  | awk 'NR==1{print $1}')"
-DEVCLAW_SHA="${DEVCLAW_SHA:-unknown}"
-echo "  DEVCLAW_REF=${DEVCLAW_REF_INPUT}  DEVCLAW_SHA=${DEVCLAW_SHA}"
+# devclaw is deployed from its own repo now (devclaw spec 005) — see
+# devclaw/deploy/. This stack no longer clones/builds devclaw: the whole block
+# that resolved DEVCLAW_SHA, rebuilt devclaw-mcp + devclaw-sandbox with
+# --no-cache (to dodge the stale git-clone layer), tagged devclaw-sandbox:latest,
+# and md5-verified runner.py against GitHub is gone. devclaw-mcp + ops-agent run
+# in devclaw's OWN compose project, and the sandbox image is pulled from ghcr by
+# that project. This project only PRODUCES the ops-agent image below.
 
-# ─── Rebuild devclaw-mcp + devclaw-sandbox with --no-cache ──────────────────
+# ─── Build the ops-agent image (build-only profile) ─────────────────────────
 #
-# Both images have a `RUN git clone --branch "${DEVCLAW_REF}"` layer.
-# When DEVCLAW_REF is a moving ref like `main`, BuildKit's cache key for
-# that layer doesn't track upstream movement — a normal `--build` reuses
-# the cached clone and ships stale code (the silent failure that burned
-# a smoke-test cycle on 2026-05-28: devclaw-mcp got the new runner.py
-# manually; devclaw-sandbox kept the old one because its layer cached).
-#
-# `--no-cache` rebuilds these two images deterministically. Pip + npm
-# layers add ~3-4 min total per image but that's the price of correctness
-# until we either pin DEVCLAW_REF to a SHA at the caller (and modify the
-# Dockerfile to handle SHAs) or add a CACHEBUST arg.
-#
-# Built BEFORE the main `up -d --build` so the subsequent compose call
-# is a cache-hit no-op for these images.
-say "rebuilding devclaw-mcp --no-cache (avoid stale git-clone layer)"
-# Build identity (devclaw #494): bake the deployed SHA + timestamp so
-# /health can answer "which code is running" without ssh.
-DEVCLAW_SHA="$(git ls-remote https://github.com/dsdevq/devclaw.git main | cut -f1 || true)"
+# ops-agent is now a build-only stub in this compose file (its runtime moved to
+# devclaw's project), so `up -d --build` no longer builds it. Build it explicitly
+# here so devclaw's project can run the freshly-built ops-agent:local image.
+say "building ops-agent image (profile=build-only)"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-  build --no-cache \
-  --build-arg GIT_SHA="${DEVCLAW_SHA}" \
-  --build-arg BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  devclaw-mcp
-say "rebuilding devclaw-sandbox --no-cache (profile=build-only)"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-  --profile build-only build --no-cache devclaw-sandbox
-
-# ─── Sandbox spawn image = the lean devclaw-sandbox (ADR 0005) ───────────────
-#
-# The per-stack image family is retired (devclaw ADR 0005, gate passed live
-# 2026-07-21): Dockerfile.dotnet no longer exists upstream — the toolchain is
-# project-declared and mise-provisions in the runner pre-step. The base image
-# rebuilt above IS the spawn image; keep :latest aligned for devclaw's
-# code-default (DEVCLAW_SANDBOX_IMAGE unset ⇒ devclaw-sandbox:latest).
-docker tag devclaw-sandbox:local devclaw-sandbox:latest
+  --profile build-only build ops-agent
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 
@@ -269,55 +227,6 @@ if total == 0:
 else:
     print(f'  total: {total} session(s) reset')
 " || echo "(session reset reported issues — review above)"
-
-# ─── Verify image runner.py matches upstream at DEVCLAW_REF ─────────────────
-#
-# Both devclaw-mcp and devclaw-sandbox clone DEVCLAW_REF and copy
-# openhands-runner/runner.py in. After build, the runner.py inside each
-# image MUST md5-match the file on github at the resolved SHA. That
-# catches TWO failure modes:
-#   (a) cross-image drift: BuildKit cached a stale clone layer in one of
-#       them (the 2026-05-28 smoke-test miss).
-#   (b) stale-default ref: both images consistently built from a stale
-#       branch that no longer tracks upstream changes (the 2026-05-28
-#       deploy that "succeeded" but shipped pre-fix code because the
-#       compose default still pointed at a long-merged feat branch).
-# Comparing both image files against the upstream SHA's runner.py
-# catches both at once.
-say "verifying runner.py matches dsdevq/devclaw@${DEVCLAW_REF_INPUT}"
-MCP_MD5=$(docker run --rm --entrypoint md5sum devclaw-mcp:local \
-  /app/openhands-runner/runner.py | awk '{print $1}')
-SBX_MD5=$(docker run --rm --entrypoint md5sum devclaw-sandbox:local \
-  /opt/devclaw/runner.py | awk '{print $1}')
-# Verify the image tasks ACTUALLY run in — DEVCLAW_SANDBOX_IMAGE (compose
-# default: devclaw-sandbox:local, the lean ADR 0005 image), not whatever else
-# happens to be tagged. This is the check whose absence hid the two-week
-# staleness (#93).
-SPAWN_IMAGE="$(grep -E '^DEVCLAW_SANDBOX_IMAGE=' "${ENV_FILE}" | tail -1 | cut -d= -f2- || true)"
-SPAWN_IMAGE="${SPAWN_IMAGE:-devclaw-sandbox:local}"
-SPAWN_MD5=$(docker run --rm --entrypoint md5sum "${SPAWN_IMAGE}" \
-  /opt/devclaw/runner.py | awk '{print $1}')
-UPSTREAM_URL="https://raw.githubusercontent.com/dsdevq/devclaw/${DEVCLAW_SHA}/openhands-runner/runner.py"
-UPSTREAM_MD5=$(curl -fsS "${UPSTREAM_URL}" | md5sum | awk '{print $1}')
-if [[ -z "${UPSTREAM_MD5}" || "${UPSTREAM_MD5}" == "d41d8cd98f00b204e9800998ecf8427e" ]]; then
-  echo "✗ could not fetch upstream runner.py from ${UPSTREAM_URL}" >&2
-  exit 1
-fi
-if [[ "${MCP_MD5}" != "${UPSTREAM_MD5}" || "${SBX_MD5}" != "${UPSTREAM_MD5}" || "${SPAWN_MD5}" != "${UPSTREAM_MD5}" ]]; then
-  cat >&2 <<EOF
-✗ runner.py md5 mismatch:
-    upstream (${DEVCLAW_REF_INPUT}@${DEVCLAW_SHA:0:7})  md5=${UPSTREAM_MD5}
-    devclaw-mcp:local                                 md5=${MCP_MD5}
-    devclaw-sandbox:local                             md5=${SBX_MD5}
-    ${SPAWN_IMAGE} (DEVCLAW_SANDBOX_IMAGE)            md5=${SPAWN_MD5}
-  One or both images are out of sync with upstream. Common causes:
-    - DEVCLAW_REF points at a stale branch (default is 'main')
-    - BuildKit cached a clone layer that didn't see upstream move
-  Re-run with --no-cache on the stale image(s).
-EOF
-  exit 1
-fi
-echo "  ✓ runner.py md5=${UPSTREAM_MD5} matches upstream + all three images (incl. ${SPAWN_IMAGE})"
 
 # ─── Skill native-deps install ───────────────────────────────────────────────
 #

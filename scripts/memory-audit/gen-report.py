@@ -13,12 +13,20 @@ VAULT = sys.argv[1] if len(sys.argv) > 1 else "/srv/memory"
 LINT = sys.argv[2] if len(sys.argv) > 2 else "/tmp/lint-out.json"
 DATE = sys.argv[3] if len(sys.argv) > 3 else datetime.date.today().isoformat()
 FIXES = sys.argv[4] if len(sys.argv) > 4 else None
-autofixes = []
-if FIXES and os.path.exists(FIXES):
+ROTATED = sys.argv[5] if len(sys.argv) > 5 else None
+
+
+def load_actions(path):
+    if not (path and os.path.exists(path)):
+        return []
     try:
-        autofixes = json.load(open(FIXES))
+        return json.load(open(path))
     except Exception:
-        autofixes = []
+        return []
+
+
+autofixes = load_actions(FIXES)
+rotations = load_actions(ROTATED)
 
 digest = json.load(open(f"{VAULT}/.openclaw-wiki/cache/agent-digest.json"))
 ch = digest.get("claimHealth", {})
@@ -45,6 +53,8 @@ sev = collections.Counter(f["severity"] for f in lint)
 
 RULEDOC = {
     "malformed-frontmatter": "Frontmatter is not valid YAML (quote scalars with embedded colons).",
+    "stale-status": "Active STATUS.md untouched >14d (rotation Rule 3) — refresh or conclude.",
+    "canvas-drift": "Architecture canvas older than the pages it depicts — re-verify the diagram.",
     "missing-frontmatter": "Content page has no YAML frontmatter (add name/summary/updatedAt/status).",
     "legacy-updatedAt-field": "Uses last_updated: — rename to updatedAt:.",
     "broken-link": "[[link]] referenced >2x but the page does not exist — write it or de-link.",
@@ -67,8 +77,9 @@ out.append("---\n")
 out.append(f"# Vault Audit — {DATE}\n")
 out.append(
     "Two passes: plugin compile (typed layer) + contract-lint (structural layer). Each check maps to a "
-    "rule in [[README]]. Safe mechanical fixes are auto-applied; judgment-needed findings are left below "
-    "for you. Nothing is ever auto-deleted.\n"
+    "rule in [[README]]. Safe mechanical fixes and Rule-3 mechanical rotations are auto-applied; "
+    "judgment-needed findings are left below for you. Deletion happens ONLY inside the contract's "
+    "rotation classes — git history is the archive.\n"
 )
 
 # Auto-fix section (what the agent handled this run)
@@ -85,6 +96,19 @@ if autofixes:
     out.append("")
 else:
     out.append("## Auto-fixed this run (0)\n\nNothing mechanically fixable this run.\n")
+
+# Rotation section (README Rule 3 mechanical classes, applied by vault-rotate.py)
+if rotations:
+    rc = collections.Counter(x["action"] for x in rotations)
+    out.append(f"## Rotated this run ({len(rotations)})\n")
+    out.append(" · ".join(f"{k}: {v}" for k, v in rc.most_common()) + "\n")
+    for x in rotations[:40]:
+        out.append(f"- `{x['action']}` {x['path']} — {x['detail']}")
+    if len(rotations) > 40:
+        out.append(f"- … +{len(rotations) - 40} more")
+    out.append("")
+else:
+    out.append("## Rotated this run (0)\n\nNo rotation class hit its TTL this run.\n")
 
 out.append("## Pass 1 — plugin layer (`openclaw wiki compile`)\n")
 out.append(

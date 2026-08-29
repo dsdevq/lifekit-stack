@@ -1,11 +1,11 @@
 # lifekit-stack
 
-> One-command personal-AI stack on your own VPS. Reference deployment for [lifekit](https://github.com/dsdevq/lifekit).
+> One-command personal-AI stack on your own VPS. Reference deployment for [lifekit](https://github.com/lifekit-hq/lifekit).
 
 `lifekit-stack` is a starter-template that deploys a complete personal-AI environment to a fresh VPS in under 15 minutes:
 
 - **[OpenClaw](https://openclaw.ai/)** — the runtime gateway (the `RuntimeGateway` adapter port). Chat bot, voice, scheduled briefs, conversational agent, workspace skills.
-- **[lifekit](https://github.com/dsdevq/lifekit)** — the Python framework that owns your `~/.life/` knowledge layer and the wizard.
+- **[lifekit](https://github.com/lifekit-hq/lifekit)** — the Python framework that owns your `~/.life/` knowledge layer and the wizard.
 - **Workspace skills** — opt-in skills bundled with this template (morning brief, learning coach, brainstorm, calendar/gmail integration, and more — see [`skills/`](./skills/)).
 - **Docker Compose + a single bash bootstrap script** — infrastructure-as-code. Reproducible from `git clone`.
 - **Mesh-VPN + loopback-only** — no public ingress, no domain, no TLS to manage. Outbound long-polling only.
@@ -20,17 +20,14 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ## Services
 
-[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines eight always-on services plus `openclaw-cli` (gated behind the `cli` compose profile, on-demand only) and `devclaw-sandbox` (build-only image, never run as a daemon). All always-on services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines six services — one of which, `openclaw-cli`, is gated behind the `cli` compose profile (on-demand only) — plus a build-only `ops-agent` image stub that is produced here but **run by devclaw's own compose project** (devclaw spec 005). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo in that split, so they no longer appear below. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
 
 | Service | Image | Role |
 | --- | --- | --- |
 | `openclaw-gateway` | `lifekit-openclaw:local` (built from `compose/openclaw-gateway/`) | Runtime gateway — channels, cron, skills, agent. Loopback bind on `127.0.0.1:18789`. |
 | `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
 | `lifekit-orchestrator` | `lifekit-openclaw:local` | Long-running Python scheduler (`devclaw-orchestrator daemon`) that replaced the OpenClaw cron entries `task_dispatch_15m` and `curator_30m`. Editable-installed from the bind-mounted source on every container start to undo `pip install -e .` hijacks from code-task runners. |
-| `lifekit-dashboard` | `lifekit-dashboard:local` (built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard)) | Read-only web UI over `~/.life/` and `~/.openclaw/workspace/`. Loopback bind on `127.0.0.1:18790`. Mounts are `:ro` — any write attempt returns HTTP 503 (see [Dashboard read-only guard](#dashboard-read-only-guard)). |
-| `devclaw-mcp` | `devclaw-mcp:local` (built from `compose/devclaw-mcp/`) | DevClaw v2 autonomous coding runtime, exposed via streamable-http MCP. Spawns one `devclaw-sandbox` container per task via the host Docker socket. Internal-only. |
 | `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | Translates DevClaw's `notify_url` POST into a Telegram message via direct Bot API call. Internal-only on `:8090`. |
-| `ops-agent` | `ops-agent:local` (built from `ops-agent/`) | Resident watcher that polls DevClaw's goal store and records incidents when a goal trips the no-progress watchdog (O1). Read-only on the DevClaw substrate, write-only to its own incident log. ops-PR1 baseline: detect + log at L0; no Claude call, no auto-actions. Future PRs add O2/O3 + cognition. See [`ops-agent/README.md`](./ops-agent/README.md). |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
 ### Uniform service policy
@@ -40,13 +37,9 @@ Every service merges the `x-policy` anchor at the top of `compose/docker-compose
 - `init: true`
 - `restart: on-failure:5` — restart loop circuit-breaker; gives up after 5 consecutive failures instead of pinning a CPU forever.
 - `logging.driver: json-file` with `max-size: 50m` and `max-file: 3` — caps each service's on-disk log footprint at ~150MB.
-- `deploy.resources.limits.memory: 1g` — per-service ceiling. Individual services override (gateway 2g, dashboard/openclaw-cli/orchestrator/google-mcp 512m).
+- `deploy.resources.limits.memory: 1g` — per-service ceiling. Individual services override (gateway 2g, openclaw-cli/orchestrator/google-mcp 512m).
 
 Rationale lives in the [2026-05-20 VPS-freeze postmortem](#) — an unbounded log + no memory cap on a runaway agent loop ate the disk and pinned RAM until the host froze. The host also gained a **2 GB `/swapfile`** as a second line of defense; `scripts/bootstrap-vps.sh` provisions it.
-
-### Dashboard read-only guard
-
-The dashboard's `~/.life` and `~/.openclaw/workspace` bind-mounts are both declared `:ro` in `compose/docker-compose.yml`. The dashboard service itself surfaces this contract by returning **HTTP 503** on any write attempt against the mounted volumes — the UI is observation-only by design, and the filesystem-level read-only mount is the enforcement.
 
 ## Monitoring
 
@@ -110,7 +103,7 @@ The exact commands the maintainer runs against the reference deployment:
 pipx install lifekit
 
 # Clone this template
-git clone https://github.com/dsdevq/lifekit-stack.git
+git clone https://github.com/lifekit-hq/lifekit-stack.git
 cd lifekit-stack
 
 # Run the wizard — prompts you for tokens + identity, generates configs,
@@ -125,11 +118,11 @@ Full walkthrough: [`docs/quickstart.md`](./docs/quickstart.md).
 ```
 lifekit-stack/
 ├── compose/              # docker-compose.yml, Dockerfiles, OpenClaw sources
-├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw, redeploy/ (systemd units)
+├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
-├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills
-├── .github/workflows/    # CI: lint, template tests, semver releases — runs on the VPS self-hosted runner
-└── PRIVATE.md            # audit checklist — what NEVER belongs in this repo
+├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills, PRIVATE.md (the never-commit audit checklist)
+├── ops-agent/            # resident ops watcher for devclaw — built here, run by devclaw's compose (spec 005)
+└── .github/workflows/    # CI (pre-commit lint, gitleaks full-history, tests, deploy — VPS self-hosted runner), doc-drift, release-please + weekly release
 ```
 
 ## VPS users
@@ -143,24 +136,13 @@ The compose bind-mounts (Claude session, `gh` config, `.gitconfig`) all resolve 
 
 ## Dashboard access
 
-The `lifekit-dashboard` service ships a read-only web UI surfacing state from `~/.life/` and `~/.openclaw/workspace/` (crons, tasks, proposals, PRs, gaps, recent runs). It is built from a VPS-local clone of [`dsdevq/lifekit-dashboard`](https://github.com/dsdevq/lifekit-dashboard) — `scripts/deploy.sh` handles the clone/pull, so `gh auth login` must already be set up on the host as the `lifekit` user.
-
-The container binds to `127.0.0.1:${LIFEKIT_DASHBOARD_PORT:-18790}` only — no public ingress. External access goes through Tailscale serve. After `deploy.sh` succeeds, run once on the VPS:
+The lifekit-dashboard web UI is **not part of this stack anymore** — it deploys from its own repo ([`lifekit-hq/lifekit-dashboard`](https://github.com/lifekit-hq/lifekit-dashboard), see its `deploy/`) as its own `dashboard` compose project, integrated with this stack only through read-only host mounts (ecosystem decoupling, 2026-08-16). It still binds loopback-only on `127.0.0.1:18790`; external access goes through Tailscale serve:
 
 ```bash
 sudo tailscale serve --bg --https=443 / http://127.0.0.1:18790
 ```
 
 The dashboard is then reachable at `https://<hostname>.<tailnet>.ts.net/` from any device on your tailnet. `tailscale serve status` lists the resulting URL.
-
-## Auto-redeploy
-
-The `lifekit-dashboard` container auto-redeploys every 5 minutes from upstream `main` via a systemd timer (`lifekit-dashboard-redeploy.timer`). The timer is installed by `scripts/bootstrap-vps.sh`; the underlying script (`scripts/redeploy/lifekit-dashboard-redeploy.sh`) checks `dsdevq/lifekit-dashboard`'s `origin/main` against the local checkout and only rebuilds when there's a new commit (silent on no-op).
-
-- **Force a redeploy now:** `sudo systemctl start lifekit-dashboard-redeploy.service`
-- **View recent runs:** `journalctl -u lifekit-dashboard-redeploy.service -n 50`
-
-This is currently scoped to `lifekit-dashboard` only. A generic, config-driven multi-repo version will land when a second repo needs the same treatment.
 
 ## Updating
 
@@ -174,7 +156,7 @@ The wizard saves your choices to `wizard.yaml` on first run, so re-runs are non-
 
 ## What's NOT in this repo
 
-This repository contains **only code, config templates, and deploy logic**. Personal data and secrets stay out by design — see [`PRIVATE.md`](./PRIVATE.md) for the full audit checklist. Briefly:
+This repository contains **only code, config templates, and deploy logic**. Personal data and secrets stay out by design — see [`docs/PRIVATE.md`](./docs/PRIVATE.md) for the full audit checklist. Briefly:
 
 - **Your `~/.life/` data** — your journal, domains, knowledge layer. Lives on your VPS. Optionally back it up to your own private git repo, never this one.
 - **Secrets** — bot tokens, API keys, encryption keys. Generated locally by the wizard, never committed.
@@ -192,7 +174,7 @@ See [`docs/architecture.md`](./docs/architecture.md) for adapter choices, port c
 
 ## Contributing
 
-Issues and PRs welcome. See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+Issues and PRs welcome. See [`CONTRIBUTING.md`](./.github/CONTRIBUTING.md).
 
 Setups outside the [Reference deployment](#reference-deployment) are not officially supported in v0.x — pull requests adding adapters (new chat transports, new mesh VPNs, new hosts) are very welcome, but we won't promise responsiveness on issues for setups outside the supported path.
 
@@ -202,7 +184,7 @@ Setups outside the [Reference deployment](#reference-deployment) are not officia
 
 ## Related
 
-- [dsdevq/lifekit](https://github.com/dsdevq/lifekit) — the Python framework + wizard CLI this template uses.
+- [lifekit-hq/lifekit](https://github.com/lifekit-hq/lifekit) — the Python framework + wizard CLI this template uses.
 - [OpenClaw](https://openclaw.ai/) — the runtime gateway.
 - [The story behind it](#) — _coming soon: blog post on building a file-based framework for personal AI memory._
 

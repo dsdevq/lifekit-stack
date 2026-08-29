@@ -23,7 +23,24 @@ In order: `$MEMORY_VAULT` env var → `~/memory` → `/srv/memory`. Everything b
 python3 scripts/vault_scan.py [--vault $VAULT]
 ```
 
-Checks, per the contract: structure allowlist (parsed from the README's `vault-structure` block), broken wikilinks (report ≥3x targets — contract says write those pages or de-link), orphan wiki pages, missing frontmatter, legacy `last_updated`, per-project `plan.md`/`log.md`/`journal.md` completeness, empty folders, non-kebab / hashed filenames, missing category `INDEX.md` (≥2 pages), and runtime/code files under a knowledge dir (`*.jsonl`/`*.db`/`*.py`/`*.log`; `/tasks/`+`/runs/` scaffold excluded, `system/rotate-extras.py` allowlisted). Exit 0 = clean, 1 = findings. Run it before and after any multi-file change.
+Checks, per the contract: structure allowlist (parsed from the README's `vault-structure` block), **scope coverage** (see below), broken wikilinks (report ≥3x targets — contract says write those pages or de-link), orphan wiki pages, missing frontmatter, legacy `last_updated`, per-project `plan.md`/`log.md`/`journal.md` completeness, empty folders, non-kebab / hashed filenames, missing category `INDEX.md` (≥2 pages), and runtime/code files under a knowledge dir (`*.jsonl`/`*.db`/`*.py`/`*.log`; `/tasks/`+`/runs/` scaffold excluded, `system/rotate-extras.py` allowlisted). Exit 0 = clean, 1 = findings. Run it before and after any multi-file change.
+
+**Scan scope is derived from the allowlist, never hand-listed.** Every top-level
+allowlist entry must fall into exactly one class, declared at the top of
+`vault_scan.py`: `WIKI_DIRS` (fully linted), `GENERATED_DIRS` (machine-written —
+`reports/`, `audits/`), `EVIDENCE_DIRS` (`sources/` — cited by `claims[]`, not
+wikilinks), `OPAQUE_DIRS` (runtime — `state/`, `scout/`, `Clippings/`), or
+`DATA_ROOTS`. Root `.md` files in the allowlist are linted for links
+automatically, so `CORE.md` and `CLAUDE.md` are covered without being listed
+anywhere.
+
+Two findings guard the classification itself: `scope-unclassified` (an allowlist
+entry no class claims) and `scope-stale` (a class naming a path the allowlist
+dropped). An unclassified directory falls through to **full wiki lint**, not to
+being skipped — unknown paths get more scrutiny, never less. The invariant:
+*a directory the contract protects still gets linted*; "protected" and
+"unchecked" must never be the same state. Do not silence a `scope-unclassified`
+finding by inventing a class for the path — decide what the path IS first.
 
 ## 3. New-page checklist (all steps, every time)
 

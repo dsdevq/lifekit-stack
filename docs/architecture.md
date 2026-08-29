@@ -115,7 +115,7 @@ They never appear in this repo. The `gitleaks` pre-commit hook enforces this.
 ## What we explicitly do NOT do
 
 - **Run an orchestrator that supervises other orchestrators.** OpenClaw is the supervisor; swarm is a peer called by OpenClaw. We don't nest.
-- **Use RAG / vector DB on the curated `~/.life/` layer.** It's small, structured, hot. Direct file reads outperform retrieval. Vector indexes belong on external unstructured corpora only (Tier 3 memory — see the [Lifekit framework docs](https://github.com/dsdevq/lifekit) for the three-tier model).
+- **Use RAG / vector DB on the curated `~/.life/` layer.** It's small, structured, hot. Direct file reads outperform retrieval. Vector indexes belong on external unstructured corpora only (Tier 3 memory — see the [Lifekit framework docs](https://github.com/lifekit-hq/lifekit) for the three-tier model).
 - **Tie identity to a specific channel.** Skills don't know whether they're called from Telegram or the OpenClaw web UI or voice. The same skill works on any surface OpenClaw routes to.
 - **Bundle the data layer.** `lifekit-stack` deploys empty `/srv/life/` on the VPS; you bootstrap content via `lifekit init` or copy from your laptop.
 
@@ -124,4 +124,4 @@ They never appear in this repo. The `gitleaks` pre-commit hook enforces this.
 - [`runbook.md`](./runbook.md) — operational: update, rollback, backup, debug.
 - [`customizing-skills.md`](./customizing-skills.md) — how to write a parameterized workspace skill.
 - [OpenClaw architecture](https://docs.openclaw.ai/) — the runtime gateway internals.
-- [Lifekit framework](https://github.com/dsdevq/lifekit) — the Python framework + CLI + memory model.
+- [Lifekit framework](https://github.com/lifekit-hq/lifekit) — the Python framework + CLI + memory model.
