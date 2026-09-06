@@ -65,3 +65,7 @@ logs/
 life-data/
 my-context.yaml
 my-context.yml
+
+# Rendered by scripts/deploy.sh from contact-points.yml.tmpl — carries the
+# owner chat id, which never enters git (docs/PRIVATE.md).
+compose/observability/grafana/provisioning/alerting/contact-points.yml

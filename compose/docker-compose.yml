@@ -8,9 +8,12 @@
 #   google-workspace-mcp — taylorwilsdon/google_workspace_mcp, internal-only on :8000 (reached via compose DNS)
 #   (lifekit-dashboard runs in its OWN compose project now — deployed from
 #    lifekit-hq/lifekit-dashboard's deploy/; ecosystem decoupling slice 2.)
-#   (devclaw-mcp + ops-agent run in devclaw's OWN compose project now — devclaw
-#    spec 005; this project keeps only the OpenClaw side + builds ops-agent's
-#    image build-only. Reached over the external `lifekit-shared` network.)
+#   (devclaw-mcp runs in devclaw's OWN compose project now — devclaw spec 005;
+#    reached over the external `lifekit-shared` network. The ops-agent it used
+#    to run was retired 2026-09-06.)
+#   loki / prometheus / grafana — the box's observability stack (moved here
+#    from finance-sentry 2026-09-06): scrapes finance-sentry + devclaw, holds
+#    the dead-man alert rules, pings Telegram directly. Loopback-bound.
 #   notify-relay         — turns devclaw's notify_url POST into a Telegram message via the gateway CLI; internal-only on :8090
 #
 # Retired in the 2026-05-27 v2 cutover:
@@ -335,27 +338,92 @@ services:
   # deploy; the 5-minute redeploy timer this repo used to install is retired.
 
   # devclaw-mcp and devclaw-sandbox were removed here on 2026-08-15: devclaw is
-  # deployed from its own repo now (devclaw spec 005). devclaw-mcp + ops-agent
-  # run in devclaw's OWN compose project (defined in the devclaw repo), and the
-  # sandbox image is pulled from ghcr by that project. This project keeps the
-  # OpenClaw services and only PRODUCES the ops-agent image; the two projects
-  # integrate at runtime via the external `lifekit-shared` network and the
-  # external `devclaw-state` volume.
+  # deployed from its own repo now (devclaw spec 005) as its own compose
+  # project; the two projects integrate at runtime via the external
+  # `lifekit-shared` network. The ops-agent (built here, run there) was retired
+  # on 2026-09-06 — the dead-man watch is the observability stack below.
 
-  ops-agent:
-    # Image-producer stub — ops-agent is not run as a long-lived service in THIS
-    # project. It publishes the ops-agent:local image, which is RUN by devclaw's
-    # OWN compose project (devclaw spec 005) alongside devclaw-mcp. Kept so
-    # `docker compose --profile build-only build ops-agent` still produces the
-    # image; the placeholder command never executes (not in `up` rotation). Its
-    # runtime config moved to devclaw's project. Mirrors the old devclaw-sandbox
-    # stub.
-    profiles: ["build-only"]
-    build:
-      context: ../ops-agent
-    image: ops-agent:local
-    # Placeholder command — service is never started via `up` in this project.
-    command: ["true"]
+  # ── Observability (box-level, moved here from finance-sentry 2026-09-06) ────
+  # Grafana + Prometheus + Loki are box infrastructure, not one product's:
+  # Prometheus scrapes finance-sentry's API AND devclaw-mcp (/metrics — the dead-man
+  # signal), Loki takes finance-sentry's logs, Grafana holds the dashboards and
+  # the alert rules that ping Telegram directly (no notify-relay in the path,
+  # so a dead relay cannot swallow the alarm). Loopback-bound; Grafana is
+  # fronted by Tailscale Serve on :3000. Data volumes are EXTERNAL so the
+  # history finance-sentry's project accumulated survives the move (names
+  # below default to that project's volume names; override in .env).
+  # Dashboards stay in each product repo: finance-sentry's deploy copies its
+  # JSON into ${LIFEKIT_FINANCE_SENTRY_DASHBOARDS} and Grafana loads that dir
+  # as a second provider — one home per dashboard, no cross-repo copy.
+  loki:
+    <<: *policy
+    image: grafana/loki:3.1.1
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - default
+      - lifekit-shared
+
+  prometheus:
+    <<: *policy
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=5GB
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - default
+      - lifekit-shared
+
+  grafana:
+    <<: *policy
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-}
+      # Alert delivery — $TELEGRAM_BOT_TOKEN is expanded into
+      # provisioning/alerting/contact-points.yml (the same devclaw bot
+      # notify-relay uses, falling back to Kit's). The chat id is NOT passed:
+      # Grafana re-types an all-digit env value as a number and the telegram
+      # integration rejects it, so contact-points.yml carries it literally.
+      TELEGRAM_BOT_TOKEN: ${DEVCLAW_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Outside the read-only provisioning mount on purpose: docker cannot
+      # create a mountpoint inside a :ro bind mount (verified 2026-09-06).
+      - ${LIFEKIT_FINANCE_SENTRY_DASHBOARDS:-/srv/finance-sentry/grafana-dashboards}:/var/lib/grafana-dashboards/finance-sentry:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - default
 
   notify-relay:
     <<: *policy
@@ -465,3 +533,19 @@ services:
 networks:
   lifekit-shared:
     external: true
+
+# ── Volumes ─────────────────────────────────────────────────────────────────
+# Observability data is EXTERNAL: it predates this project (finance-sentry's
+# compose created it as docker_<name>) and must survive recreates. On a fresh
+# box create the three volumes first (`docker volume create ...`) or point the
+# LIFEKIT_*_VOLUME vars at the ones that exist.
+volumes:
+  loki_data:
+    external: true
+    name: ${LIFEKIT_LOKI_VOLUME:-docker_loki_data}
+  prometheus_data:
+    external: true
+    name: ${LIFEKIT_PROMETHEUS_VOLUME:-docker_prometheus_data}
+  grafana_data:
+    external: true
+    name: ${LIFEKIT_GRAFANA_VOLUME:-docker_grafana_data}

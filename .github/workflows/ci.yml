@@ -26,7 +26,7 @@ jobs:
           "$RUNNER_TEMP/pcvenv/bin/pre-commit" run --all-files --show-diff-on-failure --color=always
 
   tests:
-    name: Tests (ops-agent + memory-audit)
+    name: Tests (memory-audit)
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -37,8 +37,8 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/testvenv"
           "$RUNNER_TEMP/testvenv/bin/pip" install --quiet --upgrade pip
-          "$RUNNER_TEMP/testvenv/bin/pip" install --quiet -e "./ops-agent[dev]"
-          "$RUNNER_TEMP/testvenv/bin/python" -m pytest -q ops-agent/tests scripts/memory-audit/tests
+          "$RUNNER_TEMP/testvenv/bin/pip" install --quiet pytest
+          "$RUNNER_TEMP/testvenv/bin/python" -m pytest -q scripts/memory-audit/tests
 
   gitleaks-full:
     name: Gitleaks full-history scan

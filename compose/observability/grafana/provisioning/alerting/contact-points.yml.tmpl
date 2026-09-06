@@ -1,0 +1,32 @@
+# TEMPLATE — scripts/deploy.sh renders this to contact-points.yml (gitignored)
+# with the box's chat id substituted for __TELEGRAM_CHAT_ID__. Grafana only
+# parses *.yml in this directory, so the .tmpl sits here harmlessly.
+#
+# Alert delivery goes to Telegram DIRECTLY from Grafana — not through
+# notify-relay — so a dead relay cannot swallow the one alarm that says devclaw
+# is dead. $TELEGRAM_BOT_TOKEN is expanded by Grafana from the container
+# environment (compose maps DEVCLAW_BOT_TOKEN, falling back to the main bot).
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: telegram-lifekit
+    receivers:
+      - uid: telegram-lifekit
+        type: telegram
+        settings:
+          bottoken: "$TELEGRAM_BOT_TOKEN"
+          # Substituted by deploy.sh, NOT read from the environment: Grafana's
+          # provisioning interpolation re-types an all-digit env value as a
+          # number and the telegram integration then refuses to start ("cannot
+          # unmarshal number into Go struct field Config.chatid of type
+          # string", verified on 11.2.0 — quoting it does not help). Rendering
+          # keeps the owner's chat id out of git (docs/PRIVATE.md, #132).
+          chatid: "__TELEGRAM_CHAT_ID__"
+          parse_mode: HTML
+          message: |
+            {{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>{{ .Status | toUpper }}</b> {{ range .Alerts }}
+            <b>{{ .Labels.alertname }}</b>{{ if .Annotations.summary }} — {{ .Annotations.summary }}{{ end }}
+            {{ .Annotations.description }}
+            {{ end }}
+        disableResolveMessage: false

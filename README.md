@@ -20,7 +20,7 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 
 ## Services
 
-[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines six services — one of which, `openclaw-cli`, is gated behind the `cli` compose profile (on-demand only) — plus a build-only `ops-agent` image stub that is produced here but **run by devclaw's own compose project** (devclaw spec 005). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo in that split, so they no longer appear below. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
+[`compose/docker-compose.yml`](./compose/docker-compose.yml) defines eight services — one of which, `openclaw-cli`, is gated behind the `cli` compose profile (on-demand only). `devclaw-mcp` and the former `devclaw-sandbox` build image moved to the devclaw repo (devclaw spec 005), so they no longer appear below; the `ops-agent` watchdog that used to be built here was retired on 2026-09-06 in favour of the observability stack's alert rules. All long-running services inherit the `x-policy` anchor (see [Uniform service policy](#uniform-service-policy)).
 
 | Service | Image | Role |
 | --- | --- | --- |
@@ -28,6 +28,9 @@ Autonomous build/agent workloads (swarm and similar) are explicitly **not** sibl
 | `openclaw-cli` | `lifekit-openclaw:local` | Same image as the gateway, joined into its network namespace via `network_mode: service:openclaw-gateway`. Used for one-shot `openclaw <command>` invocations against the gateway. **On-demand only** — gated behind the `cli` compose profile so `docker compose up -d` does not start it. Invoke via `docker compose --profile cli run --rm openclaw-cli <command>` (preferred) or `docker compose --profile cli up -d openclaw-cli` for a persistent session. |
 | `lifekit-orchestrator` | `lifekit-openclaw:local` | Long-running Python scheduler (`devclaw-orchestrator daemon`) that replaced the OpenClaw cron entries `task_dispatch_15m` and `curator_30m`. Editable-installed from the bind-mounted source on every container start to undo `pip install -e .` hijacks from code-task runners. |
 | `notify-relay` | `notify-relay:local` (built from `compose/notify-relay/`) | Translates DevClaw's `notify_url` POST into a Telegram message via direct Bot API call. Internal-only on `:8090`. |
+| `prometheus` | `prom/prometheus:v2.54.1` | Box-level metrics: scrapes finance-sentry's API and devclaw-mcp's `/metrics` (the dead-man signal). 30d / 5GB retention. Loopback `:9090`. |
+| `loki` | `grafana/loki:3.1.1` | Structured logs from finance-sentry (fire-and-forget push). ~14d retention. Loopback `:3100`. |
+| `grafana` | `grafana/grafana:11.2.0` | Dashboards (each product repo hands its JSON over via a mounted dir) and the **provisioned alert rules** in `compose/observability/grafana/provisioning/alerting/` — Telegram straight from Grafana, no relay in the path. Loopback `:3000`, fronted by Tailscale Serve. |
 | `google-workspace-mcp` | `ghcr.io/taylorwilsdon/google_workspace_mcp:1.21.0` | Single-user MCP bridge to Gmail/Drive/Calendar/Docs/Sheets/Tasks. Internal-only (`expose: "8000"`, no host port); reached by the gateway via compose DNS at `http://google-workspace-mcp:8000/mcp/`. |
 
 ### Uniform service policy
@@ -49,6 +52,13 @@ Per-container resource and process telemetry is collected by **[Netdata](https:/
 - **Alerts:** delivered to Telegram chat `123456789`.
 
 If you want app-level logs, `docker compose logs <service>` is still the path — Netdata only watches the host + container resource envelopes.
+
+**App-level observability** (since 2026-09-06, moved here from finance-sentry) is the `prometheus` + `loki` + `grafana` trio in this compose file. Netdata stays the host layer; Grafana is the app layer and the **alerting** layer:
+
+- Prometheus scrapes finance-sentry's API over `compose_default` and devclaw-mcp's `/metrics` over `lifekit-shared`.
+- Alert rules are files, not clicks: `compose/observability/grafana/provisioning/alerting/`. (`contact-points.yml` is the one exception: `deploy.sh` renders it from the committed `.tmpl` so the owner's chat id never enters git, and fails the deploy when it is unset — a Grafana with no contact point starts happily and drops every alert.) Today's rules are devclaw's dead-man watch — *devclaw is down* (no scrape for 3 min) and *devclaw heartbeat is hung* (tick age over three tick lengths while dispatch is open, for 5 min) — delivered to Telegram directly, so a dead `notify-relay` cannot swallow them. This replaced the LLM-driven `ops-agent`.
+- Dashboards keep one home per product: finance-sentry's deploy copies its JSON into `${LIFEKIT_FINANCE_SENTRY_DASHBOARDS}` and Grafana loads that directory as a provider.
+- Data volumes are external (`docker_*`, created by finance-sentry's former project) so the history survived the move; see `.env.example`.
 
 ## How it fits together
 
@@ -118,10 +128,10 @@ Full walkthrough: [`docs/quickstart.md`](./docs/quickstart.md).
 ```
 lifekit-stack/
 ├── compose/              # docker-compose.yml, Dockerfiles, OpenClaw sources
+│   └── observability/    # prometheus + loki config, Grafana provisioning (datasources, dashboard providers, ALERT RULES)
 ├── scripts/              # bootstrap-vps.sh, deploy.sh, oclaw
 ├── skills/               # parameterized workspace skills (opt-in via wizard)
 ├── docs/                 # quickstart, architecture, runbook, google-mcp-setup, customizing-skills, PRIVATE.md (the never-commit audit checklist)
-├── ops-agent/            # resident ops watcher for devclaw — built here, run by devclaw's compose (spec 005)
 └── .github/workflows/    # CI (pre-commit lint, gitleaks full-history, tests, deploy — VPS self-hosted runner), doc-drift, release-please + weekly release
 ```
 
