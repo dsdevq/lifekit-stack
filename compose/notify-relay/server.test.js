@@ -1,0 +1,224 @@
+/**
+ * server.test.js — drives the relay's real HTTP surface.
+ *
+ * render.test.js proves the rendering rules; this proves they reach Telegram:
+ * the endpoint exists, rejects a bad envelope before sending anything, and hands
+ * the Bot API the rendered HTML with `parse_mode: HTML`.
+ */
+import assert from "node:assert/strict";
+import { request } from "node:http";
+import { after, before, beforeEach, describe, it } from "node:test";
+
+process.env.TELEGRAM_BOT_TOKEN = "test-token";
+process.env.LIFEKIT_TELEGRAM_CHAT = "-1001234567890";
+process.env.NOTIFY_RELAY_PORT = "0"; // ephemeral: never collide with a real relay
+
+const { server } = await import("./server.js");
+
+// The relay calls the Bot API through global fetch, so the stub has to let the
+// test's own client requests through untouched.
+const realFetch = globalThis.fetch;
+let sent; // the sendMessage payloads the relay tried to deliver
+let telegramReply;
+
+globalThis.fetch = async (url, options) => {
+  if (!String(url).startsWith("https://api.telegram.org/")) {
+    return realFetch(url, options);
+  }
+  sent.push(JSON.parse(options.body));
+  return telegramReply();
+};
+
+const ok = () =>
+  new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+let base;
+
+async function post(path, body) {
+  const res = await realFetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json() };
+}
+
+// Sends the body as separate, deliberately delayed writes so the server sees
+// more than one chunk — the only way to exercise a split multi-byte character.
+function postChunked(path, chunks) {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      `${base}${path}`,
+      { method: "POST", headers: { "content-type": "application/json" } },
+      (res) => {
+        let raw = "";
+        res.setEncoding("utf8");
+        res.on("data", (d) => (raw += d));
+        res.on("end", () =>
+          resolve({ status: res.statusCode, body: JSON.parse(raw) }),
+        );
+      },
+    );
+    req.on("error", reject);
+    chunks.forEach((chunk, i) => setTimeout(() => req.write(chunk), i * 10));
+    setTimeout(() => req.end(), chunks.length * 10);
+  });
+}
+
+before(async () => {
+  if (!server.listening) {
+    await new Promise((resolve) => server.once("listening", resolve));
+  }
+  base = `http://127.0.0.1:${server.address().port}`;
+});
+
+after(() => {
+  globalThis.fetch = realFetch;
+  server.close();
+});
+
+beforeEach(() => {
+  sent = [];
+  telegramReply = ok;
+});
+
+const envelope = {
+  level: "act",
+  source: "devclaw",
+  subject: "issue-819",
+  headline: "needs a decision",
+  action: "decide(issue-819)",
+};
+
+describe("POST /notify", () => {
+  it("renders the envelope and sends it as HTML", async () => {
+    const res = await post("/notify", { ...envelope, detail: "boom & bust" });
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, { ok: true });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].parse_mode, "HTML");
+    assert.equal(sent[0].chat_id, "-1001234567890");
+    assert.ok(
+      sent[0].text.startsWith("🔴 <b>devclaw</b> · <b>issue-819</b> —"),
+      sent[0].text,
+    );
+    assert.ok(sent[0].text.includes("<blockquote expandable>boom &amp; bust"));
+    assert.ok(sent[0].text.endsWith("→ <code>decide(issue-819)</code>"));
+  });
+
+  it("drops the action for a good envelope on the wire, not just in render", async () => {
+    const res = await post("/notify", {
+      ...envelope,
+      level: "good",
+      headline: "recovered",
+      action: "docker ps on the box",
+    });
+
+    assert.equal(res.status, 200);
+    assert.ok(!sent[0].text.includes("docker ps"), sent[0].text);
+  });
+
+  it("rejects an invalid envelope without calling Telegram", async () => {
+    const res = await post("/notify", { level: "urgent", source: "devclaw" });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, "invalid envelope");
+    assert.ok(res.body.details.length >= 2, JSON.stringify(res.body));
+    assert.deepEqual(sent, []);
+  });
+
+  it("rejects a body that is not JSON", async () => {
+    const res = await post("/notify", "{not json");
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, "invalid json body");
+    assert.deepEqual(sent, []);
+  });
+
+  it("keeps an emoji whole when the body arrives split mid-character", async () => {
+    const raw = Buffer.from(
+      JSON.stringify({ ...envelope, body: "deploy 🔥 burned" }),
+    );
+    const split = raw.indexOf(Buffer.from("🔥")) + 2; // mid-emoji, mid-UTF-8
+    const res = await postChunked("/notify", [
+      raw.subarray(0, split),
+      raw.subarray(split),
+    ]);
+
+    assert.equal(res.status, 200);
+    assert.ok(sent[0].text.includes("deploy 🔥 burned"), sent[0].text);
+  });
+
+  it("takes the query string devclaw's notify_url appends", async () => {
+    const res = await post("/notify?src=goal-layer", envelope);
+    assert.equal(res.status, 200);
+    assert.equal(sent.length, 1);
+  });
+
+  // The producer has to get the status back, so the over-long body is drained
+  // rather than abandoned mid-upload — abandoning it resets the socket and the
+  // caller sees a connection error instead of being told what it did wrong.
+  it("refuses a body too large to be an envelope, and still answers", async () => {
+    const res = await post("/notify", {
+      ...envelope,
+      detail: "d".repeat(2 * 1024 * 1024),
+    });
+
+    assert.equal(res.status, 413);
+    assert.equal(res.body.error, "body too large");
+    assert.deepEqual(sent, []);
+  });
+
+  it("answers 502 when Telegram refuses the send", async () => {
+    telegramReply = () =>
+      new Response(JSON.stringify({ ok: false, description: "chat not found" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+
+    const res = await post("/notify", envelope);
+
+    assert.equal(res.status, 502);
+    assert.match(res.body.error, /chat not found/);
+  });
+});
+
+describe("the surface around it", () => {
+  it("keeps /health answering", async () => {
+    const res = await realFetch(`${base}/health`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, name: "notify-relay" });
+  });
+
+  it("keeps the legacy /text path on plain text", async () => {
+    const res = await post("/text", { text: "5 < 6 & unescaped" });
+
+    assert.equal(res.status, 200);
+    assert.equal(sent[0].text, "5 < 6 & unescaped");
+    assert.equal(sent[0].parse_mode, undefined);
+  });
+
+  it("keeps the legacy /devclaw path on plain text", async () => {
+    const res = await post("/devclaw", { status: "done", task_id: "abcdef123" });
+
+    assert.equal(res.status, 200);
+    assert.ok(sent[0].text.startsWith("✅ devclaw task — done"), sent[0].text);
+    assert.equal(sent[0].parse_mode, undefined);
+  });
+
+  // Callers of this endpoint predate the contract, so its sub-paths stay routed.
+  it("keeps routing /devclaw sub-paths", async () => {
+    const res = await post("/devclaw/callback", { status: "failed", error: "x" });
+    assert.equal(res.status, 200);
+    assert.ok(sent[0].text.startsWith("❌ devclaw task — failed"), sent[0].text);
+  });
+
+  it("404s an unknown path", async () => {
+    const res = await post("/nope", {});
+    assert.equal(res.status, 404);
+  });
+});
