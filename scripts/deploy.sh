@@ -140,18 +140,36 @@ fi
 # devclaw/deploy/. This stack no longer clones/builds devclaw: the whole block
 # that resolved DEVCLAW_SHA, rebuilt devclaw-mcp + devclaw-sandbox with
 # --no-cache (to dodge the stale git-clone layer), tagged devclaw-sandbox:latest,
-# and md5-verified runner.py against GitHub is gone. devclaw-mcp + ops-agent run
-# in devclaw's OWN compose project, and the sandbox image is pulled from ghcr by
-# that project. This project only PRODUCES the ops-agent image below.
+# and md5-verified runner.py against GitHub is gone. devclaw-mcp runs in
+# devclaw's OWN compose project, and the sandbox image is pulled from ghcr by
+# that project. (The ops-agent image this script used to build was retired
+# on 2026-09-06; the observability stack in compose/ is the watcher now.)
 
-# ─── Build the ops-agent image (build-only profile) ─────────────────────────
+# ─── Render Grafana's Telegram contact point ─────────────────────────────────
 #
-# ops-agent is now a build-only stub in this compose file (its runtime moved to
-# devclaw's project), so `up -d --build` no longer builds it. Build it explicitly
-# here so devclaw's project can run the freshly-built ops-agent:local image.
-say "building ops-agent image (profile=build-only)"
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-  --profile build-only build ops-agent
+# Grafana's provisioning interpolation re-types an all-digit env value as a
+# JSON number, and the telegram integration then refuses to start ("cannot
+# unmarshal number into Go struct field Config.chatid of type string",
+# verified on 11.2.0 — quoting it in the YAML does not help). So the chat id
+# is substituted HERE instead of read from the container environment, which
+# also keeps the owner's chat id out of git (docs/PRIVATE.md, #132): the
+# repo carries only the .tmpl, the rendered .yml is gitignored.
+#
+# Fails the deploy when the id is missing. A Grafana with no contact point
+# starts happily and drops every alert on the floor — the one failure mode
+# this whole stack exists to prevent.
+
+say "rendering Grafana contact point"
+ALERT_DIR="${REPO_DIR}/compose/observability/grafana/provisioning/alerting"
+CHAT_ID="$(sed -nE 's/^[[:space:]]*(DEVCLAW_CHAT|LIFEKIT_TELEGRAM_CHAT)=["'"'"']?([0-9-]+)["'"'"']?[[:space:]]*$/\2/p' \
+  "${ENV_FILE}" | head -1)"
+if [[ -z "${CHAT_ID}" ]]; then
+  echo "No DEVCLAW_CHAT or LIFEKIT_TELEGRAM_CHAT in ${ENV_FILE}." >&2
+  echo "Grafana's alerts would go nowhere. Set one and re-run." >&2
+  exit 1
+fi
+sed "s/__TELEGRAM_CHAT_ID__/${CHAT_ID}/" \
+  "${ALERT_DIR}/contact-points.yml.tmpl" > "${ALERT_DIR}/contact-points.yml"
 
 # ─── Build + start ───────────────────────────────────────────────────────────
 

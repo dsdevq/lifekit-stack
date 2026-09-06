@@ -7,18 +7,17 @@ binds — no public ingress). Maintainer: Denys. Pre-release v0.x.
 
 | Piece | What | Where it runs |
 | --- | --- | --- |
-| `compose/` | `docker-compose.yml` + Dockerfiles: openclaw-gateway, openclaw-cli (profile `cli`), lifekit-orchestrator, notify-relay, google-workspace-mcp | The VPS, as compose project |
+| `compose/` | `docker-compose.yml` + Dockerfiles: openclaw-gateway, openclaw-cli (profile `cli`), lifekit-orchestrator, notify-relay, google-workspace-mcp, plus the box observability trio (prometheus, loki, grafana) and its `observability/` config — datasources, dashboard providers, and the **provisioned alert rules** | The VPS, as compose project |
 | `scripts/` | `bootstrap-vps.sh` (host setup), `deploy.sh` (idempotent redeploy), `check-doc-drift.sh`, memory-audit/rotate/sync tooling | The VPS |
 | `skills/` | Jinja2-templated workspace skills (`{{ user.* }}` substitutions — never baked personal data) | OpenClaw workspace |
-| `ops-agent/` | Resident ops watcher for devclaw (Python, pytest suite). **Built here, run by devclaw's own compose project** (devclaw spec 005) | devclaw's compose |
 | `defaults/` | Agent workspace defaults (AGENTS.md contract, modules.yaml, openclaw config) | OpenClaw workspace |
 
 ## Commands
 
 ```bash
 pre-commit run --all-files                 # THE local gate — exactly what CI's lint job runs
-python3 -m venv .venv && .venv/bin/pip install -e "./ops-agent[dev]"
-.venv/bin/python -m pytest ops-agent/tests scripts/memory-audit/tests   # the CI tests job
+python3 -m venv .venv && .venv/bin/pip install --quiet pytest
+.venv/bin/python -m pytest scripts/memory-audit/tests   # the CI tests job
 bash scripts/check-doc-drift.sh            # README <-> compose service-count parity
 ```
 
@@ -33,7 +32,7 @@ account (sudo); see README "VPS users".
 - **Lint** = `pre-commit run --all-files`: gitleaks (secrets), hygiene hooks, yamllint,
   shellcheck, hadolint (`--failure-threshold error`), ruff + ruff-format, doc-drift.
 - **Gitleaks full-history scan** (OSS binary, pinned to the pre-commit rev).
-- **Tests**: ops-agent + memory-audit pytest suites.
+- **Tests**: the memory-audit pytest suite.
 - **Doc drift** (separate workflow): README service table must match `compose/docker-compose.yml`.
 - Privacy is a gate too: read [`docs/PRIVATE.md`](./docs/PRIVATE.md) before committing — gitleaks
   catches secrets, the human pass catches personal context. Skills must be `{{ user.* }}`

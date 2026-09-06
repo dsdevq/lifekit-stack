@@ -1,0 +1,22 @@
+# Box-level Prometheus (moved here from finance-sentry 2026-09-06).
+# Targets are reached by CONTAINER NAME across compose projects: finance-sentry's
+# api is joined to `compose_default` (this project's default network), devclaw-mcp
+# to the external `lifekit-shared` network — both of which this container joins.
+# The old config said `api:5000`, a compose alias that only resolved inside
+# finance-sentry's own project network; the container name resolves from here.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: finance-sentry-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['finance-sentry-api:5000']
+
+  # devclaw's dead-man signal: devclaw_tick_age_seconds / devclaw_dispatch_open
+  # (devclaw tinyspec deadman-metrics). `up{job="devclaw"}` is the liveness.
+  - job_name: devclaw
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['devclaw-mcp:8000']

@@ -26,7 +26,7 @@ If you want to extend scope, open an issue first to discuss.
 2. **Every skill is templated.** No personal data baked into a `SKILL.md`. If you can't templateize a skill cleanly, it doesn't go in `skills/`.
 3. **Idempotency.** The bootstrap script, deploy scripts, and the wizard's `init-stack` all must be safely re-runnable. State changes only when needed.
 4. **Conventional Commits.** All commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`). The `release-please` workflow uses these to derive the changelog.
-5. **All PRs must pass CI.** Pre-commit (gitleaks, yamllint, shellcheck, hadolint, ruff), the gitleaks full-history scan, the doc-drift check, and the test suites (ops-agent + memory-audit). No exceptions.
+5. **All PRs must pass CI.** Pre-commit (gitleaks, yamllint, shellcheck, hadolint, ruff), the gitleaks full-history scan, the doc-drift check, and the memory-audit test suite. No exceptions.
 
 ## Local development setup
 

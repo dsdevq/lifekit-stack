@@ -1,0 +1,105 @@
+# The dead-man watch for devclaw (devclaw tinyspec deadman-metrics, 2026-09-06).
+# devclaw reports everything it can see about itself over Telegram; these two
+# rules cover the only things it structurally cannot: its own death and a hung
+# heartbeat. Both read the /metrics scrape and nothing devclaw writes.
+#
+# Every rule: A = Prometheus instant query, B = reduce(last), C = threshold —
+# the shape Grafana's UI produces, so a rule edited there exports back to this.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: devclaw-deadman
+    folder: lifekit
+    interval: 1m
+    rules:
+      - uid: devclaw-down
+        title: devclaw is down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: up{job="devclaw"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        # A vanished target IS the alarm: no data must never read as healthy.
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 3m
+        labels:
+          service: devclaw
+          severity: critical
+        annotations:
+          summary: devclaw-mcp is not answering /metrics
+          description: >-
+            Prometheus has not scraped devclaw-mcp for 3 minutes. The process is
+            dead, crash-looping past the compose restart budget, or unreachable
+            on lifekit-shared. `docker ps` on the box; `docker compose -p devclaw
+            up -d` if the restart budget is spent.
+
+      - uid: devclaw-heartbeat-hung
+        title: devclaw heartbeat is hung
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # 1 when the last tick is older than three tick lengths WHILE
+              # dispatch is open — a held or windowed loop is idle by design,
+              # never "stalled" (the O3-class false positive).
+              expr: (devclaw_tick_age_seconds > bool 3 * devclaw_tick_seconds) * devclaw_dispatch_open
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # No data here means the target is gone — that is the down rule's job.
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          service: devclaw
+          severity: critical
+        annotations:
+          summary: devclaw answers HTTP but its heartbeat has not ticked
+          description: >-
+            devclaw_tick_age_seconds exceeded three tick lengths with dispatch
+            open for 5 minutes: the tick loop is wedged while the MCP server
+            still serves. `/health` shows last_tick_at; a restart of devclaw-mcp
+            reaps and resumes in-flight sandboxes.
