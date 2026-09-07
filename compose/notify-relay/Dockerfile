@@ -7,7 +7,7 @@
 FROM node:22-trixie-slim
 
 WORKDIR /app
-COPY server.js render.js /app/
+COPY server.js render.js task-row.js /app/
 
 ENV NOTIFY_RELAY_PORT=8090
 

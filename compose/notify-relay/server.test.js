@@ -6,6 +6,7 @@
  * the Bot API the rendered HTML with `parse_mode: HTML`.
  */
 import assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
 import { request } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
 
@@ -202,23 +203,76 @@ describe("the surface around it", () => {
     assert.equal(sent[0].parse_mode, undefined);
   });
 
-  it("keeps the legacy /devclaw path on plain text", async () => {
+  it("renders the legacy /devclaw row through the envelope", async () => {
     const res = await post("/devclaw", { status: "done", task_id: "abcdef123" });
 
     assert.equal(res.status, 200);
-    assert.ok(sent[0].text.startsWith("✅ devclaw task — done"), sent[0].text);
-    assert.equal(sent[0].parse_mode, undefined);
+    assert.equal(sent[0].parse_mode, "HTML");
+    assert.equal(
+      sent[0].text,
+      "🟢 <b>devclaw</b> · <b>task abcdef12…</b> — done",
+    );
+  });
+
+  // The row is producer-controlled text going out as HTML, so the escaping the
+  // renderer does has to hold on this path too.
+  it("escapes a task row's error on the way to Telegram", async () => {
+    const res = await post("/devclaw", {
+      status: "failed",
+      task_id: "abcdef123",
+      error: "<script>alert(1)</script> & more",
+    });
+
+    assert.equal(res.status, 200);
+    assert.ok(!sent[0].text.includes("<script>"), sent[0].text);
+    assert.ok(sent[0].text.includes("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more"));
   });
 
   // Callers of this endpoint predate the contract, so its sub-paths stay routed.
   it("keeps routing /devclaw sub-paths", async () => {
-    const res = await post("/devclaw/callback", { status: "failed", error: "x" });
+    const res = await post("/devclaw/callback", {
+      status: "failed",
+      task_id: "abcdef123",
+      error: "the runner vanished",
+    });
+
     assert.equal(res.status, 200);
-    assert.ok(sent[0].text.startsWith("❌ devclaw task — failed"), sent[0].text);
+    assert.equal(
+      sent[0].text,
+      "🔴 <b>devclaw</b> · <b>task abcdef12…</b> — failed\n\nthe runner vanished",
+    );
   });
 
   it("404s an unknown path", async () => {
     const res = await post("/nope", {});
     assert.equal(res.status, 404);
+  });
+});
+
+// CI builds no images (the runner is the production VPS), so a module added
+// beside server.js but not COPYied crashes the container at deploy and nothing
+// before that catches it. This suite is the deployment-facing one, so the check
+// lives here.
+describe("the image", () => {
+  it("copies every runtime module into /app", async () => {
+    const dir = new URL(".", import.meta.url);
+    const dockerfile = await readFile(new URL("Dockerfile", dir), "utf8");
+    // The sources of every COPY: each line is `COPY <src>... <dest>`, so the
+    // last token is the destination. Matching the filename anywhere in the file
+    // would be satisfied by a comment — or, for server.js, by the CMD.
+    const copied = new Set(
+      dockerfile
+        .split("\n")
+        .filter((line) => line.startsWith("COPY "))
+        .flatMap((line) => line.slice(5).trim().split(/\s+/).slice(0, -1)),
+    );
+    const modules = (await readdir(dir)).filter(
+      (name) => name.endsWith(".js") && !name.endsWith(".test.js"),
+    );
+
+    assert.ok(modules.length >= 3, `found only ${modules.join(", ")}`);
+    for (const name of modules) {
+      assert.ok(copied.has(name), `${name} is not COPYied into the image`);
+    }
   });
 });

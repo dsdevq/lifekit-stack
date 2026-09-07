@@ -26,6 +26,11 @@
   unconditional code path. An `import.meta`-style "only listen when I am the
   entrypoint" guard was rejected: CI builds no images, so a guard that silently
   stopped matching would ship a relay that never binds.
+- **The Node suite asserts the Dockerfile copies every runtime module.** CI
+  builds no images (the runner is the production VPS), so a module added beside
+  `server.js` and left out of the `COPY` crashes the container at deploy with
+  nothing catching it first. The check costs one test and closes the gap the
+  moment the service stopped being a single file.
 - **New verify layer is declared in `devclaw.json`**, not in `ci.yml`. The
   repo's CI test job runs the memory-audit pytest suite only; the relay's Node
   suite is a second layer and `verifyCmd` names both.
@@ -40,10 +45,18 @@
   test layer), `docs/notify-envelope.md` (new: the producer-facing contract),
   `README.md` (service-table row). Constraint: the image has no npm deps and
   must keep none — use `node:test` and `node:assert`, nothing else.
-- **US2** — `server.js` only: build an envelope from the devclaw task row and
-  hand it to `renderEnvelope`. Constraint: the task row's `status` values
-  (`done`/`failed`/other) map onto `good`/`act`/`info`; `result_json` is a
-  JSON string *or* an object depending on the devclaw version.
+- **US2 (done)** — `compose/notify-relay/task-row.js` (new: the mapping) +
+  `task-row.test.js`, `server.js` (`/devclaw` renders and sends HTML;
+  `formatMessage` deleted), `server.test.js`, `Dockerfile`,
+  `docs/notify-envelope.md`. The mapping went to its own module rather than
+  staying in `server.js` as first planned: it is pure logic with real edge cases
+  and `server.js` is I/O — the same split `render.js` already has. Constraints
+  met: `status` `done`/`failed`/other → `good`/`act`/`info` via a
+  `hasOwnProperty` lookup (`status` is producer-controlled, so a bare index
+  would resolve `constructor` off the prototype); `result_json` is read as a
+  JSON string *or* an already-parsed object. Message shape: goal in the
+  headline, the error's first line in `body`, the rest of the traceback in the
+  collapsed `detail` — replacing the legacy 600-char inline paste.
 - **US3** — the devclaw repo (`goal_notify.py` and the task-callback poster),
   not this one. Retire `/text` here only after devclaw's side has deployed.
 - **US4** — `compose/observability/grafana/provisioning/alerting/contact-points.yml.tmpl`

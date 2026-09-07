@@ -23,16 +23,16 @@
       `/notify` sends rendered HTML with `parse_mode: HTML`, `400` without
       calling Telegram on a bad envelope, `413` on an over-large body, `502`
       when Telegram refuses, a body split mid-character still arrives whole, and
-      the legacy `/text` + `/devclaw` paths still send plain text.
+      the legacy `/text` + `/devclaw` paths still deliver.
 - [ ] T010 Run the Node suite in CI's `tests` job alongside the pytest one.
       *Deferred: `.github/workflows/ci.yml` is a gate input, not this slice's to
       edit. Until then `devclaw.json`'s `verifyCmd` is what runs both layers.*
 
 ## US2 — `/devclaw` renders through the envelope
 
-- [ ] T101 Map the devclaw task row onto a v1 envelope in `server.js`; delete
-      the hand-rolled `formatMessage`.
-- [ ] T102 Tests for the task-row → envelope mapping, including
+- [x] T101 Map the devclaw task row onto a v1 envelope (`task-row.js`); delete
+      the hand-rolled `formatMessage` and send `/devclaw` as HTML.
+- [x] T102 Tests for the task-row → envelope mapping, including
       `result_json`-as-string and unknown statuses.
 
 ## US3 — devclaw's producers post envelopes *(cross-repo: devclaw)*

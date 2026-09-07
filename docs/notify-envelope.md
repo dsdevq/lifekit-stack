@@ -88,6 +88,14 @@ else uses `/notify`.
 ## Legacy endpoints
 
 `POST /devclaw` (devclaw task rows) and `POST /text` (pre-composed goal-layer
-text) still work and still send unformatted plain text. They are being migrated
-onto this renderer — see `specs/001-notify-envelope/tasks.md`. New producers
-must not use them.
+text) still accept their old payloads, because their callers deploy separately
+from this relay. New producers must not use them.
+
+`/devclaw` no longer formats anything itself: `task-row.js` maps the row onto an
+envelope and the message comes out of the same renderer as everyone else's —
+`done` → `good`, `failed` → `act`, anything else → `info`; the goal goes in the
+headline, the error's first line in `body` and the rest of the traceback in the
+collapsed `detail`. `/text` is still sent verbatim as plain text: its payload is
+a pre-escaped-for-nothing producer string, and asking Telegram to parse it as
+HTML would fail the send. It goes away once devclaw's goal layer posts
+envelopes.

@@ -7,8 +7,9 @@
  *   POST /notify   — body = a v1 notify envelope; rendered to Telegram HTML by
  *                    render.js. The format every producer should be on; see
  *                    docs/notify-envelope.md.
- *   POST /devclaw  — legacy: body = devclaw task row JSON; hand-formatted plain
- *                    text. Migrates onto /notify's renderer (spec 001, US2).
+ *   POST /devclaw  — legacy: body = devclaw task row JSON. Mapped onto an
+ *                    envelope by task-row.js and rendered by render.js, so this
+ *                    relay has exactly one renderer.
  *   POST /text     — legacy: body.text is sent verbatim, for the devclaw goal
  *                    layer. Retired once devclaw posts envelopes (US3).
  *
@@ -26,6 +27,7 @@ import {
   renderEnvelope,
   validateEnvelope,
 } from "./render.js";
+import { envelopeFromTaskRow } from "./task-row.js";
 
 const PORT = Number(process.env.NOTIFY_RELAY_PORT ?? 8090);
 // The largest envelope worth reading; `detail` is clipped to ~3.5k anyway, so
@@ -43,49 +45,8 @@ if (!CHAT) {
   process.exit(1);
 }
 
-const STATUS_ICON = {
-  done: "✅",
-  failed: "❌",
-};
-
-function formatMessage(row) {
-  const status = String(row?.status ?? "unknown");
-  const icon = STATUS_ICON[status] ?? "ℹ️";
-  const kind = String(row?.kind ?? "task");
-  const goal = String(row?.goal ?? "").slice(0, 240);
-  const taskId = String(row?.task_id ?? "?");
-
-  const lines = [`${icon} devclaw ${kind} — ${status}`];
-  if (goal) lines.push(`> ${goal}`);
-  lines.push(`task_id: ${taskId.slice(0, 8)}…`);
-
-  if (status === "failed" && row?.error) {
-    lines.push("");
-    lines.push(`error: ${String(row.error).slice(0, 600)}`);
-  } else if (status === "done" && row?.result_json) {
-    try {
-      const parsed =
-        typeof row.result_json === "string"
-          ? JSON.parse(row.result_json)
-          : row.result_json;
-      if (parsed?.message) {
-        lines.push("");
-        lines.push(String(parsed.message).slice(0, 400));
-      }
-    } catch {
-      // result_json wasn't JSON; skip
-    }
-  }
-
-  let msg = lines.join("\n");
-  if (msg.length > MAX_MSG_CHARS) {
-    msg = msg.slice(0, MAX_MSG_CHARS - 14) + "\n… [truncated]";
-  }
-  return msg;
-}
-
-// parseMode is opt-in: the legacy endpoints send producer strings that were
-// never escaped, so asking Telegram to parse them as HTML would fail the send.
+// parseMode is opt-in: /text sends a producer string that was never escaped, so
+// asking Telegram to parse it as HTML would fail the send.
 async function sendTelegram(text, parseMode) {
   const url = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
   const res = await fetch(url, {
@@ -213,14 +174,16 @@ async function handleText(req, res) {
   await deliver(res, text, undefined, "/text");
 }
 
-// POST /devclaw — legacy devclaw task-row callback.
+// POST /devclaw — legacy devclaw task-row callback, rendered through the
+// envelope. The row shape is the contract here; the message grammar is not.
 async function handleDevclaw(req, res) {
   const payload = await readJson(req, res, "/devclaw");
   if (payload === undefined) return;
 
   const context = `/devclaw task=${payload?.task_id ?? "?"} status=${payload?.status ?? "?"}`;
   log(context);
-  await deliver(res, formatMessage(payload), undefined, context);
+  const text = renderEnvelope(envelopeFromTaskRow(payload));
+  await deliver(res, text, "HTML", context);
 }
 
 async function route(req, res) {
